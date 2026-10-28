@@ -243,7 +243,7 @@ var PRISTINE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
    panel quotes it, and screenshots carry it — so a stale copy (an
    old saved file, the Netlify backup, an older shared link) can be
    told apart from the current build at a glance. */
-var QUIZ_VERSION = "v2026.10.28.1";
+var QUIZ_VERSION = "v2026.10.28.2";
 var QUIZ_BUILD_DATE = "October 28, 2026";
 
 /* ---------------- utilities ---------------- */
@@ -3655,11 +3655,25 @@ function chartSVG(q, opts) {
          the swing the counting restarts from, at or before the
          break candle). A leg whose span contains a gap break is
          therefore gap-born on the same terms, and takes the
-         through-closes path in every view. */
+         through-closes path in every view.
+         The boundary of that span counts too (Michael, Oct 28,
+         2026: chart 97gw38). There the gap break's candle IS the
+         leg's first candle: candle 26 gapped down 20.50 through
+         the uptrend's Higher Low and landed on the Lower Low the
+         new downtrend was counted from, and the leg out of that
+         low is the drift that follows the jump — four closes flat
+         on the low, then a slow climb. The strict interior test
+         (bk.idx > A.idx) missed it by one candle, so the answered
+         view and Segment Summary drew the straight chord, climbing
+         steadily away from the flat closes, while the replay —
+         where the leg is still active at the chart's end — stepped
+         through every close. A leg whose span STARTS on a gap
+         break is born in that gap on the same terms, so the test
+         below admits bk.idx === A.idx as well. */
       if (!gapBornLeg && !A.gap && !B.gap && B.idx > A.idx + 1 && q.result.breaks) {
         for (var bi = 0; bi < q.result.breaks.length; bi++) {
           var bk = q.result.breaks[bi];
-          if (bk.gap && bk.idx > A.idx && bk.idx <= B.idx) { gapBornLeg = true; break; }
+          if (bk.gap && bk.idx >= A.idx && bk.idx <= B.idx) { gapBornLeg = true; break; }
         }
       }
       /* While a leg is still forming in the candle replay — its
@@ -4350,7 +4364,9 @@ function showAbout() {
     "is called as soon as the third segment crosses the first segment's extreme, completing the " +
     "zigzag — even while that third segment is still active, not fully formed. In the " +
     "Control-point replay the trend now appears at the cross candle, not at the segment's end.</li>" +
-    "<li>Gap-born legs now step through every candle close instead of cutting straight across.</li>" +
+    "<li>Gap-born legs now step through every candle close instead of cutting straight across — " +
+    "including a leg that starts on the very candle a trend died by gapping, whose drift after " +
+    "the jump was drawn as one straight line floating above its closes.</li>" +
     "<li>Near-doji candle bodies are drawn with a visible body instead of as a hairline.</li>" +
     "<li>Segment Summary steps no longer split a single swing leg into separate steps.</li>" +
     "</ul>" +
