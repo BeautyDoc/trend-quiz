@@ -889,6 +889,7 @@ function analyze(chart, lineMode) {
   var innerFormed = false, confirmedReversal = false, everTrended = false;
   var lastBreakSeg = -1, pokeDone = false;
   var unfinished = null;   // a three-segment pattern whose third leg is the chart's final segment
+  var deferredFar = null;  // a far relocation whose print candle overshoots into the next segment {sw, legDir} — see relocateFar
 
   function mkLine(pt, dir, cls, to) {
     var w = dirWords(dir);
@@ -1019,7 +1020,32 @@ function analyze(chart, lineMode) {
     everTrended = true;
     var w = dirWords(dir);
     var gapTxt = gapPriced(farSw) ? " " + gapCtlText(dir, farSw) : "";
-    if (brokeHere) {
+    /* "Confirmed on the spot" is honest only when the pattern was
+       already complete at the break close. brokeHere alone does not
+       prove that: the break can land INSIDE the pattern's own third
+       segment — the breaking move IS the third segment (chart
+       9c46we, Michael's catch, Oct 27, 2026: candle 28's gap kills
+       the uptrend and opens the third counter-segment in the same
+       move; that segment runs to candle 33 and completes only at
+       candle 34's close against it). Stamping such an establishment
+       at the break candle drew the finished trend's final control
+       points — the near circle sitting on a candle that did not
+       exist yet — over frames where no trend existed yet. So when
+       the pattern's near swing is this segment's own swing, the
+       establishment takes the plain path below: consolidation in
+       the frames from the break on, the prospective pair drawn
+       active at the leg's running extreme, final only at the third
+       segment's confirmation close. The one exception is a gap
+       third segment already final at the break close — a gap
+       segment whose own candle closed back against the gap is born
+       final (gapLegConfirm) — where the pattern genuinely was
+       complete when the break landed, so the spot confirmation
+       stands. */
+    var brk = breaks.length ? breaks[breaks.length - 1] : null;
+    var spotConfirm = brokeHere && brk &&
+      (nearSw.seg !== si ||
+       (nearSw.gap && gapLegConfirm(nearSw) !== -1 && gapLegConfirm(nearSw) <= brk.idx));
+    if (spotConfirm) {
       confirmedReversal = true;
       pushEvent("confirmed", nearSw.idx,
         "The three counter-segments had already completed their pattern inside the old range, " +
@@ -1031,33 +1057,36 @@ function analyze(chart, lineMode) {
         " is established. The controlling line is now the " + w.far + " at " + fmt(far.price) +
         " — the trend lives while closes hold " + w.inside + " it." + gapTxt);
     }
-    /* The replay runs in real time. A confirmed trend is stamped at
-       the break candle — the close that killed the old trend is the
-       close that sets the new one's controls. A plain establishment
-       is stamped at its confirmation close: the first candle that
-       closes against the third leg. Until that close the replay
-       shows no trend, exactly as a trader watching live would have
-       seen — but the forming control points do exist by then, so
-       they are drawn dashed and labelled active — not final (Mr.
-       Black's ruling: "Those control points can be active, but not
-       final until that candle close following the segment is
-       complete"), and the pendingEsts entry lets the frames in
-       between say why, naming the close they wait for. At the
-       confirmation close they snap to solid final lines. The
-       Segment Summary keeps its step at the third segment's extreme,
-       the candle that completes the pattern it summarizes. */
-    var stampIdx = brokeHere && breaks.length ? breaks[breaks.length - 1].idx
-                                               : firstAgainstClose(segRanges[si].to + 1, dir);
+    /* The replay runs in real time. A spot-confirmed trend is
+       stamped at the break candle — the close that killed the old
+       trend is the close that sets the new one's controls, because
+       its pattern was already complete. Every other establishment
+       — a plain one, and a reversal whose break landed inside its
+       own third segment — is stamped at its confirmation close:
+       the first candle that closes against the third leg. Until
+       that close the replay shows no trend, exactly as a trader
+       watching live would have seen — but the forming control
+       points do exist by then, so they are drawn dashed and
+       labelled active — not final (Mr. Black's ruling: "Those
+       control points can be active, but not final until that
+       candle close following the segment is complete"), and the
+       pendingEsts entry lets the frames in between say why,
+       naming the close they wait for. At the confirmation close
+       they snap to solid final lines. The Segment Summary keeps
+       its step at the third segment's extreme, the candle that
+       completes the pattern it summarizes. */
+    var stampIdx = spotConfirm ? brk.idx
+                                : firstAgainstClose(segRanges[si].to + 1, dir);
     ctrlLog.push({
       idx: stampIdx,
-      kind: brokeHere ? "confirmed" : "establish", trend: dir,
+      kind: spotConfirm ? "confirmed" : "establish", trend: dir,
       near: { price: near.price, idx: near.idx }, far: { price: far.price, idx: far.idx },
       activeShown: stampIdx > nearSw.idx,
       farGap: gapPriced(farSw), farType: farSw.type,
       segFrom: segRanges[si].from, segTo: segRanges[si].to,
       lines: events[events.length - 1].lines
     });
-    if (!brokeHere) {
+    if (!spotConfirm) {
       pendingEsts.push({
         extremeIdx: nearSw.idx, confirmIdx: stampIdx, dir: dir,
         nearPrice: nearSw.price, farPrice: farSw.price,
@@ -1157,6 +1186,43 @@ function analyze(chart, lineMode) {
       });
     }
   }
+  /* Land a far-control relocation: a correction that deepened past
+     the line in force takes over as the far control. Called from
+     updateControls when the correction's end swing sits inside its
+     own segment — those candles have already faced the old line in
+     that segment's scan, so any crossing they made was a wick poke
+     (a gap or a close beyond the line would have broken the trend
+     there and no relocation would be pending).
+     When the swing overshoots the junction — the swing derivation
+     reads a segment's extreme over its own candles plus the
+     following segment's, so the print can land on a candle of the
+     NEXT segment — that candle has not faced the old line yet: the
+     walk scans a segment's candles before it applies the segment's
+     swing. Landing the relocation at once would judge the print
+     candle against the line it itself sets, swallowing exactly the
+     crossings that kill a trend — a gap straight over the old line,
+     or a close beyond it, whatever the candle's body direction
+     (chart da75dv, Michael's catch, Oct 27, 2026: candle 18 gapped
+     from 112.17 to open at 121.90, over the downtrend's Lower High
+     at 114.86, and closed at 119.93 above it; the engine relocated
+     the line to the gap price and kept the dead trend alive, its
+     caption even claiming no candle had closed beyond the old
+     line). So an overshooting relocation is DEFERRED instead (see
+     deferredFar and the main loop): the old line stays in force
+     while the next segment's scan judges the overshoot candles with
+     the ordinary gap / close / wick checks, and the relocation
+     lands only once its own print candle has passed them. A break
+     on any of those candles discards the relocation with the trend.
+     Either way, a relocation that lands has crossed its old line by
+     wick alone, which is what its replay captions assert. */
+  function relocateFar(sw, legDir) {
+    var farBefore = far.price;
+    far = { price: sw.price, idx: sw.idx, kind: "far", gapMoved: gapPriced(sw) };
+    if (gapPriced(sw)) gapEv.push({ idx: sw.idx, price: sw.price });
+    stampCtrl({ idx: sw.idx, kind: "far", trend: trend,
+      near: { price: near.price, idx: near.idx }, far: { price: far.price, idx: far.idx },
+      prevFar: farBefore, farGap: gapPriced(sw), farType: sw.type, lines: snapshot(sw.idx) }, sw, legDir);
+  }
   function updateControls(sw) {
     var cand, m, i;
     var farBefore = far ? far.price : null;
@@ -1185,11 +1251,10 @@ function analyze(chart, lineMode) {
           farGap: !!(farGapSwU && far.price !== farBefore), farType: farGapSwU ? farGapSwU.type : null,
           lines: events[events.length - 1].lines }, sw, "up");
       } else if (sw.type === "low" && sw.idx > near.idx && sw.price < far.price) {
-        far = { price: sw.price, idx: sw.idx, kind: "far", gapMoved: gapPriced(sw) };
-        if (gapPriced(sw)) gapEv.push({ idx: sw.idx, price: sw.price });
-        stampCtrl({ idx: sw.idx, kind: "far", trend: trend,
-          near: { price: near.price, idx: near.idx }, far: { price: far.price, idx: far.idx },
-          prevFar: farBefore, farGap: gapPriced(sw), farType: sw.type, lines: snapshot(sw.idx) }, sw, "down");
+        /* Deferred when the print candle overshoots this segment's
+           range — see relocateFar. */
+        if (sw.idx > segRanges[sw.seg].to) deferredFar = { sw: sw, legDir: "down" };
+        else relocateFar(sw, "down");
       }
     } else if (trend === "down") {
       if (sw.type === "low" && sw.price < near.price) {
@@ -1216,11 +1281,10 @@ function analyze(chart, lineMode) {
           farGap: !!(farGapSwD && far.price !== farBefore), farType: farGapSwD ? farGapSwD.type : null,
           lines: events[events.length - 1].lines }, sw, "down");
       } else if (sw.type === "high" && sw.idx > near.idx && sw.price > far.price) {
-        far = { price: sw.price, idx: sw.idx, kind: "far", gapMoved: gapPriced(sw) };
-        if (gapPriced(sw)) gapEv.push({ idx: sw.idx, price: sw.price });
-        stampCtrl({ idx: sw.idx, kind: "far", trend: trend,
-          near: { price: near.price, idx: near.idx }, far: { price: far.price, idx: far.idx },
-          prevFar: farBefore, farGap: gapPriced(sw), farType: sw.type, lines: snapshot(sw.idx) }, sw, "up");
+        /* Deferred when the print candle overshoots this segment's
+           range — see relocateFar. */
+        if (sw.idx > segRanges[sw.seg].to) deferredFar = { sw: sw, legDir: "up" };
+        else relocateFar(sw, "up");
       }
     }
   }
@@ -1400,6 +1464,26 @@ function analyze(chart, lineMode) {
             "don't: the downtrend is intact.");
         }
       }
+      /* A deferred far relocation (see relocateFar) rides on this
+         scan: while it is pending, the checks above judge this
+         segment's candles against the line still in force — which
+         is exactly the old line, since the relocation has not
+         landed — and it lands only once its own print candle has
+         passed them. A break on the way discards it with the
+         trend. */
+      if (deferredFar && (!trend || i >= deferredFar.sw.idx)) {
+        var dfx = deferredFar;
+        deferredFar = null;
+        if (trend) relocateFar(dfx.sw, dfx.legDir);
+      }
+    }
+    /* Safety net: a deferred relocation whose print candle this
+       scan somehow never reached still resolves here, before this
+       segment's own swing is applied — it must never leak into a
+       later segment or outlive the trend that printed it. */
+    if (deferredFar) {
+      if (trend) relocateFar(deferredFar.sw, deferredFar.legDir);
+      deferredFar = null;
     }
     var endSw = null;
     segSwings.forEach(function (sw) { if (!sw.gap) endSw = sw; });
