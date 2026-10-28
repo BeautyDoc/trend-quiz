@@ -998,6 +998,7 @@ function analyze(chart, lineMode) {
   var spentNearIdx = [];   // swing idxs that may never again serve as a pattern's near swing: every established pattern's near swing, and both control swings of every trend that dies (see the establishment call)
   var lastBreakSeg = -1, pokeDone = false;
   var unfinished = null;   // a three-segment pattern whose third leg is the chart's final segment
+  var lastEst = null;      // the most recent establishment's call record {dir, callIdx, confirmIdx, crossIdx, nearPrice, farPrice, spot} — the final views' active-third-segment handling
   var deferredFar = null;  // a far relocation whose print candle overshoots into the next segment {sw, legDir} — see relocateFar
 
   function mkLine(pt, dir, cls, to) {
@@ -1186,6 +1187,66 @@ function analyze(chart, lineMode) {
     var spotConfirm = brokeHere && brk && brk.dir !== dir && confirmHolds &&
       (nearSw.seg !== si ||
        (nearSw.gap && gapLegConfirm(nearSw) !== -1 && gapLegConfirm(nearSw) <= brk.idx));
+    /* The third leg's candle span, read from the swing that launched
+       it — not from this range's start: the leg can span several
+       ranges (see the unified swing-leg bookkeeping above), and its
+       first range can begin well before this one. */
+    var legFrom = legStartIdx(farSw, segRanges[si].to);
+    /* The pattern's first segment extreme (b) — the print the third
+       leg's running extreme has to cross before its control pair
+       can appear. swingsAll here is [..., a, b, c, d] with d the
+       near swing and c the far swing, so b is three back. */
+    var bSwE = swingsAll.length >= 3 ? swingsAll[swingsAll.length - 3] : null;
+    /* When the third segment becomes fully formed: the first candle
+       that closes against the third leg, or -1 when the chart ends
+       first (Mr. Black, Oct 27, 2026: a segment completes only at
+       that close — that rule still governs the SEGMENT; the Oct 28
+       ruling below governs the CALL). */
+    var confirmIdxE = spotConfirm ? brk.idx
+                                  : firstAgainstOrNever(segRanges[si].to + 1, dir);
+    /* The first close at which the third leg's running body extreme
+       crosses the first segment's extreme — the close the control
+       pair first appears at, drawn active. -1 when the leg never
+       crosses before it completes: the pair then arrives at the
+       completion close (final), or never, when the chart ends on a
+       leg that has not crossed. */
+    var crossIdxE = -1;
+    if (!spotConfirm && bSwE) {
+      for (var ciE = legFrom; ciE <= nearSw.idx; ciE++) {
+        var evCE = dir === "up" ? Math.max(candles[ciE].o, candles[ciE].c)
+                                : Math.min(candles[ciE].o, candles[ciE].c);
+        if (dir === "up" ? evCE > bSwE.price : evCE < bSwE.price) { crossIdxE = ciE; break; }
+      }
+      if (crossIdxE === -1 && confirmIdxE !== -1) crossIdxE = confirmIdxE;
+    }
+    /* The CALL (Mr. Black, WhatsApp, Oct 28, 2026; Michael's Part III
+       research the same day; the cross requirement ratified by
+       Michael later that day): the trend is called on its third
+       segment while that segment is still active, not fully formed —
+       it does not have to complete — BUT the third segment must
+       cross the first segment's extreme, making a complete zigzag,
+       to count as a trend, so the call is stamped at the CROSS
+       candle: the first close at which the third leg's running
+       extreme crosses the first segment's extreme. Before that close
+       the pattern does not count — the replay reads consolidation,
+       with no trend state and no control pair. When a live trend's
+       break lands inside the third segment after the cross, the
+       call still waits for that break close: an opposing pattern
+       cannot be called until the trend in force has been broken at
+       its control point first. A spot-confirmed trend — its pattern
+       already complete inside the old range — is stamped at the
+       break candle as before, and its third segment is fully
+       formed, not active. */
+    var callIdxE;
+    if (spotConfirm) callIdxE = brk.idx;
+    else {
+      callIdxE = crossIdxE !== -1 ? crossIdxE : legFrom;
+      if (brk && brk.idx > callIdxE) callIdxE = brk.idx;
+      if (confirmIdxE !== -1 && callIdxE > confirmIdxE) callIdxE = confirmIdxE;
+    }
+    lastEst = { dir: dir, callIdx: callIdxE, confirmIdx: confirmIdxE, crossIdx: crossIdxE,
+                nearPrice: nearSw.price, farPrice: farSw.price, spot: !!spotConfirm,
+                bPrice: bSwE ? bSwE.price : null };
     if (spotConfirm) {
       confirmedReversal = true;
       pushEvent("confirmed", nearSw.idx,
@@ -1194,63 +1255,80 @@ function analyze(chart, lineMode) {
         "Its controlling " + w.far + " is " + fmt(far.price) + "." + gapTxt);
     } else {
       pushEvent("established", nearSw.idx,
-        "The third segment completes the pattern: " + w.pattern + ". A " + w.trend +
-        " is established. The controlling line is now the " + w.far + " at " + fmt(far.price) +
+        "The pattern of " + w.pattern + " is in establishment: the " + w.trend +
+        " is called at candle " + (callIdxE + 1) +
+        (crossIdxE !== -1 && crossIdxE === callIdxE
+          ? " — the close where its third segment crosses the first segment's extreme, " +
+            "completing the zigzag — "
+          : crossIdxE !== -1
+            ? " — its third segment crossed the first segment's extreme at candle " +
+              (crossIdxE + 1) + ", completing the zigzag, and the call lands on the close " +
+              "that broke the old trend's control point — "
+            : " — the close its third segment begins — ") +
+        "while that segment is still active — not fully formed. " +
+        (confirmIdxE === -1
+          ? "The chart ends before a candle closes against the third leg, so the segment " +
+            "never becomes fully formed and the call stays an active-third-segment call to the end. "
+          : "It becomes fully formed at the close of candle " + (confirmIdxE + 1) +
+            " — the first candle that closes against the leg. ") +
+        "The controlling line is the " + w.far + " at " + fmt(far.price) +
         " — the trend lives while closes hold " + w.inside + " it." + gapTxt);
     }
-    /* The replay runs in real time. A spot-confirmed trend is
-       stamped at the break candle — the close that killed the old
-       trend is the close that sets the new one's controls, because
-       its pattern was already complete. Every other establishment
-       — a plain one, and a reversal whose break landed inside its
-       own third segment — is stamped at its confirmation close:
-       the first candle that closes against the third leg. Until
-       that close the replay shows no trend, exactly as a trader
-       watching live would have seen — but the forming control
-       points do exist by then, so they are drawn dashed and
-       labelled active — not final (Mr. Black's ruling: "Those
-       control points can be active, but not final until that
-       candle close following the segment is complete"), and the
-       pendingEsts entry lets the frames in between say why,
-       naming the close they wait for. At the confirmation close
-       they snap to solid final lines. The Segment Summary keeps
-       its step at the third segment's extreme, the candle that
-       completes the pattern it summarizes. */
-    var stampIdx = spotConfirm ? brk.idx
-                                : firstAgainstClose(segRanges[si].to + 1, dir);
-    /* The third leg's candle span, read from the swing that launched
-       it — not from this range's start: the leg can span several
-       ranges (see the unified swing-leg bookkeeping above), and its
-       first range can begin well before this one. */
-    var legFrom = legStartIdx(farSw, segRanges[si].to);
+    /* The replay runs in real time, and the call is what the replay
+       shows: the control-state entry is stamped at the CALL close,
+       so the trend box reads the trend from that close onward. The
+       control POINTS keep the existing active → final lifecycle —
+       the frame builder suppresses the live lines before the call's
+       pair exists, draws them dashed as active from the cross (or
+       the extreme print) to the confirmation close, and lets the
+       solid final lines stand from that close on; the pendingEsts
+       entry lets the frames in between say why, naming the closes
+       they wait for. The Segment Summary keeps its step at the
+       third segment's extreme, the candle that completes the
+       pattern it summarizes. */
     ctrlLog.push({
-      idx: stampIdx,
+      idx: callIdxE,
       kind: spotConfirm ? "confirmed" : "establish", trend: dir,
       near: { price: near.price, idx: near.idx }, far: { price: far.price, idx: far.idx },
-      activeShown: stampIdx > nearSw.idx,
+      activeShown: !spotConfirm,
+      isCall: !spotConfirm,
+      callIdx: callIdxE, confirmIdx: confirmIdxE, crossIdx: crossIdxE,
+      bPrice: bSwE ? bSwE.price : null, bIdx: bSwE ? bSwE.idx : -1,
       farGap: gapPriced(farSw), farType: farSw.type,
       segFrom: legFrom, segTo: segRanges[si].to,
       lines: events[events.length - 1].lines
     });
     if (!spotConfirm) {
       pendingEsts.push({
-        extremeIdx: nearSw.idx, confirmIdx: stampIdx, dir: dir,
+        extremeIdx: nearSw.idx, confirmIdx: confirmIdxE, dir: dir,
         nearPrice: nearSw.price, farPrice: farSw.price,
         farGap: gapPriced(farSw), farIdx: farSw.idx, farType: farSw.type,
-        segFrom: legFrom, segTo: segRanges[si].to, never: false
+        segFrom: legFrom, segTo: segRanges[si].to, never: confirmIdxE === -1,
+        isCall: true, callIdx: callIdxE, crossIdx: crossIdxE,
+        bPrice: bSwE ? bSwE.price : null, bIdx: bSwE ? bSwE.idx : -1
       });
     }
   }
   /* The last four swings read as a possible trend pattern: returns
-     {dir, nearSw, farSw} when swings a,b,c,d complete three segments
-     in one direction — nearSw (d) is the third segment's extreme,
-     farSw (c) the second segment's — and null otherwise. This is a
-     pure read of the swings gathered so far; WHEN it is consulted is
-     the establishment-timing rule (the teacher's completion rule):
-     at the end of the segment that completes it, and acted on only
-     when a further segment follows — so a trend is recognized once
-     its third segment has ended and a fourth has begun, never on an
-     unfinished third leg. */
+     {dir, nearSw, farSw} when swings a,b,c,d form three directional
+     segments in one direction — nearSw (d) is the third segment's
+     extreme, farSw (c) the second segment's — and null otherwise.
+     The pattern still requires the third segment's extreme to cross
+     the first segment's extreme (b): that cross is what makes the
+     leg the pattern's third segment at all. What Mr. Black's
+     Oct 28, 2026 ruling changes is the CALL's timing, not the
+     pattern: the trend is called while that third segment is still
+     active, not fully formed — it does not have to complete first —
+     and (Michael, ratifying the cross requirement the same day)
+     the call is stamped at the CROSS candle, the close where the
+     third segment's running extreme crosses the first segment's
+     extreme and the zigzag completes; before that close the
+     pattern does not count as a trend, and no control pair exists
+     yet — the pair appears at the cross, active, and turns final
+     at the segment's completion. This is a pure read of the swings
+     gathered so far; WHEN it is consulted — at the end of the
+     third segment's range, the first moment the walk can see the
+     whole leg — and the call's timing are handled in establish(). */
   function windowPattern() {
     var n = swingsAll.length;
     if (n < 4) return null;
@@ -1574,17 +1652,21 @@ function analyze(chart, lineMode) {
   }
 
   /* Narration for a final segment that completes a three-segment
-     pattern: the pattern is all there, but the third leg never ended
-     (no fourth segment begins), so under the completion rule no
-     trend is established. */
+     pattern whose near swing is already SPENT — it was acted on
+     before, or served as a control of a trend that has died (see
+     the spent-window guard at the establishment call site). The
+     pattern shape is all there, but those swings cannot establish
+     a second trend: a genuinely fresh pattern on the final segment
+     is established under the Oct 28 call rule and narrated by its
+     own establishment step, never by this one. */
   function unfinishedCaption(si, pat) {
     var w = dirWords(pat.dir);
     var range = segRanges[si];
     var txt = "Candles " + (legStartIdx(pat.farSw, range.to) + 1) + "–" + (range.to + 1) + " complete the third " +
       "segment: the push to the " + w.near + " at " + fmt(pat.nearSw.price) + " (candle " +
-      (pat.nearSw.idx + 1) + ") finishes a pattern of " + w.pattern + ". But the chart ends " +
-      "with that third leg still in place — a trend counts only once the third segment has " +
-      "ended and a fourth has begun, so no " + w.trend + " is established.";
+      (pat.nearSw.idx + 1) + ") finishes a pattern of " + w.pattern + ". But that pattern's " +
+      "swings are already spent — they were acted on before, as the control points of a " +
+      "trend that has since died — so they cannot establish a new " + w.trend + " here.";
     if (gapPriced(pat.farSw)) {
       txt += " The pattern's " + w.far + " is a gap price: candle " + (pat.farSw.idx + 1) +
         " gapped " + (pat.farSw.type === "low" ? "down" : "up") + " to " + fmt(pat.farSw.price) +
@@ -1665,7 +1747,8 @@ function analyze(chart, lineMode) {
        window left by a trend that died inside this very segment is
        not a forming trend. */
     var patternNow = trend ? null : windowPattern();
-    if (si === totalSegs - 1 && patternNow && patternNow.nearSw.seg === si) {
+    if (si === totalSegs - 1 && patternNow && patternNow.nearSw.seg === si &&
+        spentNearIdx.indexOf(patternNow.nearSw.idx) >= 0) {
       unfinished = patternNow;
       /* The replay owes this pattern a pending note too: its third
          segment printed its extreme, but no candle ever closes
@@ -1677,19 +1760,21 @@ function analyze(chart, lineMode) {
         segFrom: legStartIdx(patternNow.farSw, segRanges[si].to), segTo: segRanges[si].to, never: true
       });
     }
-    /* Establishment, under the completion rule: a trend is
-       recognized only once its third segment has ENDED — and a
-       segment ends when the next one begins, so the pattern is
-       acted on here, at the end of the segment that completes it,
-       only when a further segment follows. The controls (near = the
-       third segment's extreme, far = the second segment's) then
-       exist before the next segment's candles are break-checked,
-       exactly as if recognition happened at that segment's start.
-       On the chart's FINAL segment the pattern is never acted on:
-       that third leg never ended, so there is no trend. If this
-       segment also broke the old trend over a pattern that had
-       formed inside its range, the break confirms the new trend
-       (brokeHere, as before). */
+    /* Establishment, under the Oct 28, 2026 call rule: the pattern
+       is acted on here, at the end of the third segment's range —
+       the first moment the walk can see the whole leg — but the
+       CALL itself is stamped at the cross candle, the close where
+       the third segment's running extreme crosses the first
+       segment's extreme and completes the zigzag (see establish):
+       the third segment may still be active, not fully formed, so
+       a pattern on the chart's FINAL segment establishes a trend
+       too — the leg never ended, and the trend stands on its
+       active third segment. The controls (near = the third
+       segment's extreme, far = the second segment's) then exist
+       before the next segment's candles are break-checked, exactly
+       as before. If this segment also broke the old trend over a
+       pattern that had formed inside its range, the break confirms
+       the new trend (brokeHere, as before). */
     /* A completed pattern is acted on at most once, and a dead
        trend's own window never re-establishes it. When the segment
        in which a trend dies prints no swing of its own, the same
@@ -1707,7 +1792,7 @@ function analyze(chart, lineMode) {
        or a counter-pattern formed inside a live trend's range —
        always carries a near swing that is none of those, so the
        guard costs it nothing. */
-    if (patternNow && si < totalSegs - 1 &&
+    if (patternNow &&
         spentNearIdx.indexOf(patternNow.nearSw.idx) < 0) {
       establish(patternNow.dir, patternNow.nearSw, patternNow.farSw, si, lastBreakSeg === si);
     }
@@ -1846,6 +1931,28 @@ function analyze(chart, lineMode) {
     }
   }
 
+  /* A trend whose third segment never became fully formed — the
+     chart ended on the active leg — shows its control pair the way
+     the replay does: drawn active (dashed, lowercase) when the leg
+     crossed the first segment's extreme, and not drawn at all when
+     it never crossed (no pair exists yet). */
+  var activeAtEnd = !!(lastEst && !lastEst.spot && lastEst.confirmIdx === -1 &&
+                       trend && trend === lastEst.dir && near && far &&
+                       near.price === lastEst.nearPrice && far.price === lastEst.farPrice);
+  if (activeAtEnd) {
+    if (lastEst.crossIdx === -1) {
+      finalLines = finalLines.filter(function (L) { return L.cls !== "live"; });
+    } else {
+      finalLines = finalLines.map(function (L) {
+        if (L.cls !== "live") return L;
+        if (L.price !== lastEst.nearPrice && L.price !== lastEst.farPrice) return L;
+        return { price: L.price, from: L.from, to: L.to, cls: "active", circle: L.circle,
+                 abbr: L.abbr ? L.abbr.toLowerCase() : L.abbr,
+                 label: L.label + " (active — not final)" };
+      });
+    }
+  }
+
   /* Segment Summary steps: the walk's event steps interleaved with one
      narration step per segment, ordered by candle index (stable, so
      steps sharing an index keep their walk order), then the closing
@@ -1857,9 +1964,19 @@ function analyze(chart, lineMode) {
   var finalCaption;
   if (answer === "up" || answer === "down") {
     var fw = dirWords(answer);
-    finalCaption = "End of the chart: the market is in a " + fw.trend + ". The last close, " +
-      fmt(lastClose) + ", holds " + fw.inside + " the controlling " + fw.far + " at " +
-      fmt(far.price) + ".";
+    if (activeAtEnd) {
+      finalCaption = "End of the chart: the market is in " + statePhrase(answer) +
+        " — its third segment is still active (not fully formed), and an active third " +
+        "segment is enough to call the trend. The last close, " + fmt(lastClose) +
+        ", holds " + fw.inside + " the controlling " + fw.far + " at " + fmt(far.price) + "." +
+        (lastEst.crossIdx === -1
+          ? " The third leg never crossed the first segment's extreme, so no control pair was drawn."
+          : " Its control points are drawn active — not final.");
+    } else {
+      finalCaption = "End of the chart: the market is in " + statePhrase(answer) + ". The last close, " +
+        fmt(lastClose) + ", holds " + fw.inside + " the controlling " + fw.far + " at " +
+        fmt(far.price) + ".";
+    }
   } else if (breaks.length) {
     var bw0 = dirWords(breaks[breaks.length - 1].dir);
     finalCaption = "End of the chart: consolidation. The " + bw0.trend + " is dead, and no new " +
@@ -1960,31 +2077,38 @@ function analyze(chart, lineMode) {
     if (atExtreme) {
       txt = "Candle " + (fi + 1) + " prints the extreme of the third segment (candles " +
         (pe.segFrom + 1) + "–" + (pe.segTo + 1) + ") — the " + w.near + " at " +
-        fmt(pe.nearPrice) + ". But the segment has not officially popped into existence yet: " +
-        "a segment exists only once a candle closes against it. The control points it would " +
-        "set — the " + w.near + " at " + fmt(pe.nearPrice) + " and the " + w.far + " at " +
+        fmt(pe.nearPrice) + ". The " + w.trend + " " +
+        (pe.isCall && pe.callIdx != null
+          ? "was called at candle " + (pe.callIdx + 1) + " — the close where this third " +
+            "segment crossed the first segment's extreme, completing the zigzag — and it stands"
+          : "was called when this third segment began, and it stands") +
+        " on the segment while the segment is still active: a segment " +
+        "is fully formed only once a candle closes against it. The control points it " +
+        "sets — the " + w.near + " at " + fmt(pe.nearPrice) + " and the " + w.far + " at " +
         fmt(pe.farPrice) + " — are drawn dashed with lowercase labels: they are active — " +
         "not final. " +
         (pe.never
           ? "They would become final at the close of the first candle that closes against " +
             "the leg — but the chart ends before any candle does, so they never become " +
-            "final: no " + w.trend + " is established."
+            "final: the trend stays an active-third-segment call to the end."
           : "They become final only at the close of candle " + (pe.confirmIdx + 1) +
-            " — the first candle that closes against the leg — and only then does the " +
-            w.trend + " exist. Until that close there is no trend, and the dashed control " +
-            "points stay active — not final.");
+            " — the first candle that closes against the leg — and at that close the third " +
+            "segment becomes fully formed; until then the trend stands on its active " +
+            "third segment, and the dashed control points stay active — not final.");
     } else {
       txt = "Candle " + (fi + 1) + " closed at " + fmt(candles[fi].c) + ". The third segment's " +
-        "extreme printed at candle " + (pe.extremeIdx + 1) + ", but the segment is still not " +
-        "official — no candle has closed against the leg yet, so the dashed control points " +
+        "extreme printed at candle " + (pe.extremeIdx + 1) + ", and the " + w.trend +
+        " stands on that segment while it is still active — no candle has closed against " +
+        "the leg yet, so the segment is not fully formed and the dashed control points " +
         "shown are still active — not final. " +
         (pe.never
           ? "They become final only at the close of the first candle that closes against " +
-            "the leg, and the chart ends without one, so no trend is established and the " +
-            "control points never become final."
-          : "The segment pops into existence at the close of candle " + (pe.confirmIdx + 1) +
+            "the leg, and the chart ends without one, so the segment never becomes fully " +
+            "formed and the control points never become final — the trend remains an " +
+            "active-third-segment call."
+          : "The segment becomes fully formed at the close of candle " + (pe.confirmIdx + 1) +
             ", the first candle that closes against the leg, and at that close the control " +
-            "points become final; until then there is no trend.");
+            "points become final; until then the trend is an active-third-segment call.");
     }
     if (pe.farGap) {
       txt += " The " + w.far + " it will answer to is a gap price: candle " + (pe.farIdx + 1) +
@@ -2018,19 +2142,23 @@ function analyze(chart, lineMode) {
     var nearA = abbrOf(pe.dir, "near"), farA = abbrOf(pe.dir, "far");
     var tail = pe.never
       ? "They become final only once the third segment has ended and a candle has closed " +
-        "against it — the chart ends first, so they never become final and no " + w.trend +
-        " is established."
+        "against it — the chart ends first, so they never become final and the trend " +
+        "remains an active-third-segment call."
       : "They become final at the close of candle " + (pe.confirmIdx + 1) +
-        " — the first candle that closes against the third leg — and only then does the " +
-        w.trend + " exist; until that close there is no trend, and the dashed points stay " +
-        "active — not final.";
+        " — the first candle that closes against the third leg — and at that close the " +
+        "third segment becomes fully formed; the trend itself was called at candle " +
+        (pe.callIdx + 1) + " — the close where the third segment crossed the first " +
+        "segment's extreme, completing the zigzag — and until that close the dashed " +
+        "points stay active — not final.";
     var txt;
     if (atCross) {
       txt = "Candle " + (fi + 1) + " pushed to " + fmt(pa.runPrice) + " — past the first " +
         "segment's " + w.near + " at " + fmt(pa.info.bPrice) + " (candle " +
         (pa.info.bIdx + 1) + "), the extreme the forming pattern had to beat. The third " +
         "segment (candles " + (pe.segFrom + 1) + "–" + (pe.segTo + 1) + ") is still " +
-        "travelling, so the pattern is not complete and no trend exists yet. The control " +
+        "travelling, so the pattern is not complete — the third segment is still active, " +
+        "not fully formed — and the " + w.trend + " is called at this close, as the " +
+        "zigzag completes. The control " +
         "points it would set — the " + w.near + " at " + fmt(pa.runPrice) + " so far, and " +
         "the " + w.far + " at " + fmt(pe.farPrice) + " (candle " + (pe.farIdx + 1) +
         "), the swing that launched this leg — are drawn dashed with lowercase labels (" +
@@ -2042,7 +2170,8 @@ function analyze(chart, lineMode) {
         (pe.farIdx + 1) + ") and has pushed past the first segment's " + w.near + " at " +
         fmt(pa.info.bPrice) + ", so its prospective " + w.near + " stands at " +
         fmt(pa.runPrice) + " (candle " + (pa.runIdx + 1) + "). The pair is drawn dashed " +
-        "with lowercase labels: active — not final, and there is no trend yet. " + tail;
+        "with lowercase labels: active — not final; the trend stands on this active " +
+        "third segment. " + tail;
     }
     if (pe.farGap) {
       txt += " The " + w.far + " it will answer to is a gap price: candle " +
@@ -2369,7 +2498,7 @@ function analyze(chart, lineMode) {
         }
         return txt + "Segment " + count + " since the break is now under way. A new trend " +
           "needs three directional segments" +
-          (count === 3 ? " — and the third counts only once it has ended and a fourth has begun"
+          (count === 3 ? " — and the third counts once it crosses the first segment's extreme, completing the zigzag, while it is still active"
                        : ", so " + (3 - count) + " more to go") +
           " — no live control points yet.";
       }
@@ -2394,13 +2523,15 @@ function analyze(chart, lineMode) {
       return headCore + " — the first close against the previous move, so segment " +
         (countP - 1) + " (candles " + legSpanText(r - 1) + ") is complete. " +
         "Segment " + countP + " of the three a trend needs is now under way" +
-        (countP === 3 ? " — and it counts only once it has ended and a fourth segment has begun" : "") +
+        (countP === 3 ? " — and it counts once it crosses the first segment's extreme, completing the zigzag, while it is still active" : "") +
         ". No trend yet, so there are no control points.";
     }
     if (countP > 3) return null;
     return headCore + ". Segment " + countP + " of the three a trend needs is under way — " +
       "candles " + (legFromIdx(r) + 1) + "–" + (fi + 1) + " so far, " + move + ". No trend yet: " +
-      "control points exist only once a third segment has ended and a fourth has begun.";
+      "a trend is called when three directional segments form a pattern and the third " +
+      "crosses the first segment's extreme — the third may still be active — and control " +
+      "points come with the call.";
   }
   var frames = [];
   var lg = -1, breaksSeen = 0;
@@ -2419,6 +2550,14 @@ function analyze(chart, lineMode) {
         if (c2.cls === "live") c2.to = fi;
         return c2;
       });
+    }
+    /* While this frame sits between the CALL and the confirmation
+       close, the called trend's pair is not final — and before the
+       cross it does not exist at all — so the establishment entry's
+       live lines are suppressed here; the pending / crossing windows
+       below draw the pair dashed as active exactly when it exists. */
+    if (curSt && curSt.isCall && (curSt.confirmIdx === -1 || fi < curSt.confirmIdx)) {
+      fLines = fLines.filter(function (L) { return L.cls !== "live"; });
     }
     var chBrk = null, chEst = null, chExt = null, chFar = null;
     changedHere.forEach(function (ch) {
@@ -2457,9 +2596,10 @@ function analyze(chart, lineMode) {
        trend breaking only at the leg's own last candle — so the
        gate is this frame's own control state, not the pattern's.) */
     var patEarly = null;
-    for (var qj = 0; qj < pendingEsts.length && !(curSt && curSt.trend); qj++) {
+    for (var qj = 0; qj < pendingEsts.length; qj++) {
       var peQ = pendingEsts[qj], infQ = pendEarly[qj];
       if (!infQ || fi >= peQ.extremeIdx || fi < infQ.scanFrom) continue;
+      if (!peQ.isCall || fi < peQ.callIdx) continue;
       var hiQ = peQ.dir === "up";
       var runQ = null, runQI = -1, crossQ = -1;
       for (var qk = infQ.scanFrom; qk <= fi; qk++) {
@@ -2472,6 +2612,21 @@ function analyze(chart, lineMode) {
         patEarly = { pe: peQ, info: infQ, runPrice: runQ, runIdx: runQI, crossIdx: crossQ };
         break;
       }
+    }
+    /* The call window's opening stretch, if this frame sits in it:
+       the trend has been called but the leg has not yet crossed
+       the first segment's extreme and its own extreme has not
+       printed — the called trend exists, but no control pair does
+       yet. Since the call is stamped at the cross, this window is
+       now only the no-cross-reference fallback (crossIdx === -1);
+       in the normal run the frames before the cross belong to the
+       previous control state — consolidation, pattern forming. */
+    var callPend = null;
+    for (var cpj = 0; cpj < pendingEsts.length; cpj++) {
+      var peCp = pendingEsts[cpj];
+      if (peCp.isCall && fi >= peCp.callIdx && fi < peCp.extremeIdx &&
+          (peCp.crossIdx === -1 || fi < peCp.crossIdx) &&
+          (peCp.never || fi < peCp.confirmIdx)) { callPend = peCp; break; }
     }
     /* The control relocation pending window this frame sits in, if
        any: a new extreme or deeper correction printed inside the
@@ -2655,11 +2810,61 @@ function analyze(chart, lineMode) {
         ]);
       }
     }
+    /* The establishment whose CONFIRMATION close this frame is, if
+       any: its control entry was stamped at the call, candles ago,
+       so changedHere does not carry it — find it by confirmIdx. */
+    var confEst = null;
+    for (var cej = 0; cej < ctrlSorted.length; cej++) {
+      if (ctrlSorted[cej].isCall && ctrlSorted[cej].confirmIdx === fi) { confEst = ctrlSorted[cej]; break; }
+    }
+    var activeThird = !!(callPend || patEarly || (pend && pend.isCall) ||
+      (curSt && curSt.isCall && (curSt.confirmIdx === -1 || fi < curSt.confirmIdx)));
     var fcap, ew, xw;
     var pctlNarrated = false;
     var earlyNarrated = false;
     var patNarrated = false;
-    if (chBrk && chEst && chEst.kind === "confirmed") {
+    if (chEst && chEst.isCall && fi !== chEst.confirmIdx) {
+      /* The CALL frame: this is the cross close — the third
+         segment's running extreme crosses the first segment's
+         extreme here, completing the zigzag — so the trend is
+         called from this close on its still-active third segment
+         (Oct 28, 2026 ruling, cross timing ratified by Michael
+         the same day). When a live trend's break landed inside
+         the third segment after the cross, the call waited for
+         the break close instead, and this frame is that close. */
+      ew = dirWords(chEst.trend);
+      var pairTxtC = (chEst.crossIdx !== -1 && chEst.crossIdx <= fi)
+        ? "The leg has pushed past the first segment's " + ew.near + " at " +
+          fmt(chEst.bPrice) + ", so its prospective control pair is drawn dashed: active — not final."
+        : "No control pair exists yet: the pair appears — drawn active, not final — when " +
+          "the leg crosses the first segment's " + ew.near +
+          (chEst.bPrice != null ? " at " + fmt(chEst.bPrice) : "") +
+          ", and it becomes final when the third segment completes.";
+      if (chBrk) {
+        fcap = breakCapByIdx[fi] + " That same close completes the break the new trend " +
+          "needed: with the old trend's control point broken, three directional " +
+          "segments counted from its final extreme, and the third segment's cross of " +
+          "the first segment's extreme completing the zigzag, the new " + ew.trend +
+          " is called from this close — its third segment still active, not " +
+          "fully formed. " + pairTxtC;
+      } else {
+        fcap = "Candle " + (fi + 1) + " closed at " + fmt(candles[fi].c) +
+          ". On this close the third segment's running extreme crosses the first " +
+          "segment's " + ew.near +
+          (chEst.bPrice != null ? " at " + fmt(chEst.bPrice) : "") +
+          " — the zigzag completes here — so the " + ew.trend +
+          " is called from this close, even though its third segment is still active — " +
+          "not fully formed. " + pairTxtC;
+      }
+    } else if (chBrk && confEst) {
+      ew = dirWords(confEst.trend);
+      fcap = breakCapByIdx[fi] + " That same close was also the first to close against " +
+        "the third leg, so the segment became fully formed at the very close that killed " +
+        "the trend it had called — the " + ew.trend + ", called at candle " +
+        (confEst.callIdx + 1) + " when its third segment crossed the first segment's " +
+        "extreme and completed the zigzag — never had a frame of its own as a " +
+        "fully formed trend.";
+    } else if (chBrk && chEst && chEst.kind === "confirmed") {
       ew = dirWords(chEst.trend);
       fcap = breakCapByIdx[fi] + " Because the three counter-segments had already completed their " +
         "pattern inside the old range, that same close also sets the new " + ew.trend + "'s control " +
@@ -2679,11 +2884,29 @@ function analyze(chart, lineMode) {
         "trend never had a frame of its own.";
     } else if (chBrk) {
       fcap = breakCapByIdx[fi];
+    } else if (confEst) {
+      ew = dirWords(confEst.trend);
+      fcap = "Candle " + (fi + 1) + " is the first candle to close against the third leg " +
+        "(candles " + (confEst.segFrom + 1) + "–" + (confEst.segTo + 1) + ") — at that close the " +
+        "third segment becomes fully formed. The " + ew.trend + " was called at candle " +
+        (confEst.callIdx + 1) + " — the close where its third segment crossed the first " +
+        "segment's extreme, completing the zigzag — on the still-active segment; now its " +
+        "control points become final: the near control is the " + ew.near + " (" +
+        abbrOf(confEst.trend, "near") + ") at " + fmt(confEst.near.price) + " (candle " +
+        (confEst.near.idx + 1) + "), and the far control — the line the trend must hold — is the " +
+        ew.far + " (" + abbrOf(confEst.trend, "far") + ") at " + fmt(confEst.far.price) +
+        " (candle " + (confEst.far.idx + 1) + ")." +
+        (confEst.farGap ? " " + gapCtlText(confEst.trend, { idx: confEst.far.idx, price: confEst.far.price, type: confEst.farType }) : "");
     } else if (chEst) {
       ew = dirWords(chEst.trend);
       fcap = "Candle " + (fi + 1) + " is the first candle to close against the third leg " +
         "(candles " + (chEst.segFrom + 1) + "–" + (chEst.segTo + 1) + ") — at that close the " +
-        "third segment is complete, and the " + ew.trend + " pops into existence. Its control " +
+        "third segment becomes fully formed, and the " + ew.trend +
+        (chEst.isCall
+          ? " — called at candle " + (chEst.callIdx + 1) + ", when its third segment " +
+            "crossed the first segment's extreme and completed the zigzag — "
+          : " — called when the segment began — ") +
+        "stands on the completed pattern. Its control " +
         "points are set from the completed pattern: the near control is the " + ew.near + " (" +
         abbrOf(chEst.trend, "near") + ") at " + fmt(chEst.near.price) + " (candle " +
         (chEst.near.idx + 1) + "), and the far control — the line the trend must hold — is the " +
@@ -2749,6 +2972,20 @@ function analyze(chart, lineMode) {
          have the active prospective pair, and says so. */
       patNarrated = true;
       fcap = patCaption(patEarly, fi, fi === patEarly.crossIdx);
+    } else if (callPend) {
+      /* The called trend's opening stretch: the third segment is
+         under way and the trend stands on it, but the leg has not
+         crossed the first segment's extreme, so there is no control
+         pair to draw yet — the caption must say exactly that, not
+         the generic "no trend" note. */
+      var cwP = dirWords(callPend.dir);
+      fcap = "Candle " + (fi + 1) + " closed at " + fmt(candles[fi].c) + ". The " + cwP.trend +
+        " was called when its third segment began (candle " + (callPend.callIdx + 1) +
+        "), and that segment is still active — not fully formed. The leg has not yet " +
+        "crossed the first segment's " + cwP.near +
+        (callPend.bPrice != null ? " at " + fmt(callPend.bPrice) : "") +
+        ", so no control pair exists yet: the pair will be drawn active — not final — when " +
+        "the leg crosses it, and final when the third segment completes.";
     } else if (early) {
       /* A relocation's leg crossed the control it will replace on
          an earlier close (or this one) and is still travelling:
@@ -2798,13 +3035,13 @@ function analyze(chart, lineMode) {
     } else if (breaksSeen > 0) {
       fcap = formingCaption(fi, true) ||
         ("Candle " + (fi + 1) + " closed at " + fmt(candles[fi].c) +
-        ". The old trend is dead and no new three-segment trend has completed, so there are no " +
+        ". The old trend is dead and no new three-segment trend has been called, so there are no " +
         "live control points — nothing to move.");
     } else {
       fcap = formingCaption(fi, false) ||
         ("Candle " + (fi + 1) + " closed at " + fmt(candles[fi].c) +
-        ". No trend yet — a trend needs three completed segments before any control points " +
-        "exist — so there is nothing to move.");
+        ". No trend yet — a trend is called on three directional segments, the third of " +
+        "which may still be active, before any control points exist — so there is nothing to move.");
     }
     /* If this close also PRINTED a relocation whose own caption
        branch lost to a bigger event on the same close — an
@@ -2924,7 +3161,7 @@ function analyze(chart, lineMode) {
        controls are set. Derived from the same ctrlLog entry the frame's
        lines come from, so the replay's trend readout always agrees
        with the control points on screen and with the final answer. */
-    frames.push({ idx: fi, lines: fLines, caption: fcap,
+    frames.push({ idx: fi, lines: fLines, caption: fcap, activeThird: activeThird,
                   state: curSt && curSt.trend ? curSt.trend : "consolidation" });
   }
 
@@ -2932,7 +3169,33 @@ function analyze(chart, lineMode) {
   var parts = [];
   if (answer === "up" || answer === "down") {
     var w = dirWords(answer);
-    if (innerFormed && !breaks.length) {
+    if (activeAtEnd) {
+      var pairTxtA = lastEst.crossIdx === -1
+        ? "The third leg has not yet crossed the first segment's extreme, so no control " +
+          "pair exists yet — the pair arrives, active, at that cross, or final when the " +
+          "segment completes; the far control will sit at the " + w.far + " at " +
+          fmt(far.price) + "."
+        : "Its control points — the " + w.near + " at " + fmt(near.price) + " and the " +
+          w.far + " at " + fmt(far.price) + " — are drawn active, not final, because no " +
+          "candle has closed against the third leg yet.";
+      if (breaks.length) {
+        var ab = breaks[breaks.length - 1], abw = dirWords(ab.dir);
+        parts.push("The " + abw.trend + " died when " + (ab.gap ? "price gapped " : "a candle closed ") +
+          abw.beyond + " its " + abw.far + " (" + fmt(ab.level) + "). Three fresh directional " +
+          "segments then formed " + w.pattern + ", and the new " + w.trend + " was called at " +
+          "candle " + (lastEst.callIdx + 1) + " — the close where its third segment crossed " +
+          "the first segment's extreme, completing the zigzag. That third " +
+          "segment is still active — not fully formed — at the end of the chart, but an " +
+          "active third segment counts, so the market is in " + statePhrase(answer) + ". " + pairTxtA);
+      } else {
+        parts.push("Three directional segments printed " + w.pattern + ", and the " + w.trend +
+          " was called at candle " + (lastEst.callIdx + 1) +
+          " — the close where its third segment crossed the first segment's extreme, " +
+          "completing the zigzag. That third segment is still active — not fully formed — when the chart ends, " +
+          "but an active third segment is enough to call the trend, so the market is in " +
+          statePhrase(answer) + " at the end of the chart. " + pairTxtA);
+      }
+    } else if (innerFormed && !breaks.length) {
       var ow = dirWords(answer === "up" ? "down" : "up");
       parts.push("Three counter-segments completed a " + ow.trend + " pattern inside the " +
         w.trend + "'s range — but a trend dies only when a candle closes beyond its far " +
@@ -2966,15 +3229,14 @@ function analyze(chart, lineMode) {
       if (breaks.length) {
         var ub = breaks[breaks.length - 1], ubw = dirWords(ub.dir);
         parts.push("The " + ubw.trend + " died when " + (ub.gap ? "price gapped " : "a candle closed ") +
-          ubw.beyond + " its " + ubw.far + " (" + fmt(ub.level) + "). Three directional segments then " +
-          "formed " + uw.pattern + " — but the third segment was still running when the chart ended. " +
-          "A new trend counts only once its third segment has ended and a fourth has begun, so the " +
-          "market is in consolidation at the end of the chart.");
+          ubw.beyond + " its " + ubw.far + " (" + fmt(ub.level) + "). The only three-segment " +
+          "pattern at the end reuses that dead trend's own swings — already spent as its " +
+          "control points — so it cannot establish a new " + uw.trend + ": the market is in " +
+          "consolidation at the end of the chart.");
       } else {
         parts.push("Three directional segments printed " + uw.pattern +
-          " — but the third segment was still running when the chart ended. A trend counts only " +
-          "once the third segment has ended and a fourth has begun, so no trend was ever " +
-          "established: consolidation.");
+          " — but that pattern's swings were already spent, acted on as an earlier trend's " +
+          "control points, so they cannot establish a trend a second time: consolidation.");
       }
     } else if (breaks.length) {
       var b = breaks[breaks.length - 1], bw = dirWords(b.dir);
@@ -3004,6 +3266,14 @@ function analyze(chart, lineMode) {
         "ever made higher highs with higher lows, or lower lows with lower highs. Without " +
         "three directional segments there is no trend: consolidation.");
     }
+  }
+  if ((answer === "up" || answer === "down") && lastEst && !lastEst.spot && !activeAtEnd &&
+      lastEst.confirmIdx !== -1) {
+    var lw2 = dirWords(answer);
+    parts.push("The " + lw2.trend + " was called at candle " + (lastEst.callIdx + 1) +
+      " — the close where its third segment crossed the first segment's extreme, " +
+      "completing the zigzag — while that segment was still active; it " +
+      "became fully formed at the close of candle " + (lastEst.confirmIdx + 1) + ".");
   }
   if (gapEv.length && (answer === "up" || answer === "down")) {
     var gw = dirWords(answer);
@@ -3822,11 +4092,11 @@ function setCandleStyle(s) {
    and in the Rules overlay, so the wording can never drift apart. */
 var RULES_LIST_HTML =
   '<ul class="rules">' +
-  "<li><strong>Rule 1 — Three segments make a trend.</strong> An impulse and a correction alone are not a trend. And a segment can be as small as one candle: a single candle against the move, however small, is a whole segment by itself and sets an HL or LH. A tiny gap against the move counts the same way. The trend counts only once the third segment has ended and a fourth has begun — two segments alone, or an unfinished third leg, is no trend.</li>" +
+  "<li><strong>Rule 1 — Three segments make a trend.</strong> An impulse and a correction alone are not a trend. And a segment can be as small as one candle: a single candle against the move, however small, is a whole segment by itself and sets an HL or LH. A tiny gap against the move counts the same way. The trend is called at the close where the third segment crosses the first segment's extreme, completing the zigzag — segments 1 and 2 complete, segment 3 under way — and the third segment may still be active, not fully formed: it does not have to complete, but without the cross there is no trend. Its line stays dotted while it is active and turns solid when the segment becomes fully formed. Two segments alone are no trend. If a trend is already in force, an opposing pattern cannot be called until that trend's control point has first been broken; then three segments counted from the dead trend's final extreme establish the new trend, the third active or complete.</li>" +
   "<li><strong>Rule 2 — Control points come from candle bodies</strong> — the Higher High and Higher Low in an uptrend, the Lower Low and Lower High in a downtrend. Wicks don't count.</li>" +
   "<li><strong>Rule 3 — A trend dies on a close — and a gap counts as a candle.</strong> The moment one candle closes beyond the far control point, the old trend is over. A gap that jumps beyond the far control point breaks the trend the same way; only a wick poking through leaves it alive.</li>" +
   "<li><strong>Rule 4 — A gap short of the line is a retracement</strong> (when gaps appear). A gap against the trend that stops short of the far control point is that correction's extreme — when the trend resumes, the far control point sits at the gap price.</li>" +
-  "<li><strong>Rule 5 — After a break, it's consolidation</strong> until three new directional segments complete a new trend — even if they form inside the old range first.</li>" +
+  "<li><strong>Rule 5 — After a break, it's consolidation</strong> until three new directional segments establish a new trend — the third may still be active, not fully formed — even if they form inside the old range first.</li>" +
   "</ul>";
 
 /* The rules as an overlay panel, so they can be re-read from the
@@ -3989,9 +4259,13 @@ function showLegend() {
     "<h3>The trend box</h3>" +
     "<p>In the Control-point replay, the box above the chart — “Trend as of candle N” — shows " +
     "what a trader watching live could honestly have said at that close. It reads " +
-    "<strong>Consolidation</strong> while a pattern’s points are still only active, switches to " +
-    "<strong>Uptrend</strong> or <strong>Downtrend</strong> at the close where they become " +
-    "final, and drops back to Consolidation on the close that breaks a trend.</p>" +
+    "<strong>Consolidation</strong> until a trend is called, switches to " +
+    "<strong>Uptrend</strong> or <strong>Downtrend</strong> at the close where the third " +
+    "segment crosses the first segment's extreme, completing the zigzag — and while that " +
+    "segment is still active, not fully formed, the box " +
+    "says so — and drops back to Consolidation on the close that breaks a trend. The " +
+    "control points themselves still turn final only at the close that completes their " +
+    "segment.</p>" +
     "<h3>Gap prices and previous lines</h3>" +
     "<p>When a gap sets a control point, the point sits at the gap price — the edge of the " +
     "gap — because a gap counts as a segment all by itself, and the label says so: “Higher Low " +
@@ -4502,7 +4776,7 @@ function renderStepThrough() {
     "</div>" +
     '<p class="sub">The detail \u2014 the same story close by close, as it stood at each candle\'s close.</p>' +
     '<div class="trend-box"><span class="tb-k">Trend as of candle ' + (st.step + 1) + ':</span>' +
-    '<span class="tb-v ' + fr.state + '">' + stateName(fr.state) + "</span>" +
+    '<span class="tb-v ' + fr.state + '">' + stateName(fr.state) + (fr.activeThird ? " — third segment still active (not fully formed)" : "") + "</span>" +
     (hasActive ? '<span class="tb-k">Forming controls on this frame: active — not final</span>' : "") +
     "</div>" +
     chartSVG(q, { upto: fr.idx, lines: fr.lines, highlight: fr.idx, abbr: true, swings: swingsSoFar,
