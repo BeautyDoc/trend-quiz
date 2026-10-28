@@ -3548,8 +3548,36 @@ function chartSVG(q, opts) {
       out.push('<line x1="' + X(i) + '" y1="' + Y(c.h) + '" x2="' + X(i) + '" y2="' + Y(c.l) +
         '" stroke="' + colr + '" stroke-width="1.3"' + op + "/>");
       var yT = Y(Math.max(c.o, c.c)), yB = Y(Math.min(c.o, c.c));
+      /* Every candle must be visibly painted, so a body gets a
+         minimum height of 6 plot units, grown symmetrically about
+         the body's own centre. A near-doji candle — open and close
+         a few tenths apart on a chart whose range spans twenty-plus
+         points — otherwise paints as a hairline tick that reads as
+         an empty slot at desktop distance and vanishes outright at
+         phone width (Michael, Oct 28, 2026: chart e54kyf, candles
+         20 and 23 of the post-gap climb, bodies 4.0 units tall;
+         a census across styles puts 4–8% of all candles under 5
+         units and most charts contain one). The growth is clamped
+         inside the candle's own high–low span — the body never
+         paints a price the candle did not trade through, and when
+         the whole span is shorter than the minimum the body simply
+         fills it — and nothing else moves: wick, colour, slot and
+         every price-exact element (lines, circles, labels, the
+         crosshair readout's numbers) are untouched; only the
+         painted thickness of a sub-6-unit body changes. */
+      if (yB - yT < 6) {
+        var yMidB = (yT + yB) / 2, yHiB = Y(c.h), yLoB = Y(c.l);
+        yT = yMidB - 3; yB = yMidB + 3;
+        if (yT < yHiB) { yB += yHiB - yT; yT = yHiB; }
+        if (yB > yLoB) { yT -= yB - yLoB; yB = yLoB; }
+        if (yT < yHiB) yT = yHiB;
+        /* A candle whose whole high–low span is itself under the
+           old 1.6 floor keeps at least that floor, as a dash
+           centred on its range — never thinner than before. */
+        if (yB - yT < 1.6) { var yCB = (yHiB + yLoB) / 2; yT = yCB - 0.8; yB = yCB + 0.8; }
+      }
       out.push('<rect x="' + (X(i) - cw / 2) + '" y="' + yT + '" width="' + cw + '" height="' +
-        Math.max(1.6, yB - yT) + '" fill="' + colr + '"' + op + "/>");
+        (yB - yT) + '" fill="' + colr + '"' + op + "/>");
     }
   }
   /* control circles + labels (labels nudged apart if they collide) */
