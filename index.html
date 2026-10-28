@@ -3047,6 +3047,7 @@ function analyze(chart, lineMode) {
     finalLines: finalLines,
     swings: swingsAll,
     legConfirm: legConfirm,
+    breaks: breaks,
     refDir: refDir,
     unfinished: unfinished ? unfinished.dir : null,
     lastBreakIdx: breaks.length ? breaks[breaks.length - 1].idx : -1
@@ -3347,6 +3348,31 @@ function chartSVG(q, opts) {
         q.segRanges[B.seg] && q.segRanges[B.seg].from > A.idx &&
         candles[q.segRanges[B.seg].from] && candles[q.segRanges[B.seg].from - 1] &&
         Math.abs(candles[q.segRanges[B.seg].from].o - candles[q.segRanges[B.seg].from - 1].c) >= 0.01;
+      /* The same birth, with the gap one range earlier in the leg
+         (Michael, Oct 28, 2026: chart e54kyf). There the leg is the
+         first segment counted from a GAP BREAK — candle 18 gapped
+         through the dead downtrend's Lower High — but one small
+         candle closed up out of the Lower Low first, so the
+         body-run subdivision gives the leg three ranges and B's own
+         range opens six candles after the gap, on a candle that
+         never gapped: the probe above reads that candle, finds no
+         gap, and the answered view and Segment Summary draw the
+         straight chord while the replay's final frame — where the
+         leg is still active — steps through every close. The
+         analyzer records every break and flags the gap ones, and a
+         gap break's candle falls inside exactly one leg's span:
+         the first segment counted from that break, the segment the
+         gap gave birth to (the dying trend's own legs all end at
+         the swing the counting restarts from, at or before the
+         break candle). A leg whose span contains a gap break is
+         therefore gap-born on the same terms, and takes the
+         through-closes path in every view. */
+      if (!gapBornLeg && !A.gap && !B.gap && B.idx > A.idx + 1 && q.result.breaks) {
+        for (var bi = 0; bi < q.result.breaks.length; bi++) {
+          var bk = q.result.breaks[bi];
+          if (bk.gap && bk.idx > A.idx && bk.idx <= B.idx) { gapBornLeg = true; break; }
+        }
+      }
       /* While a leg is still forming in the candle replay — its
          extreme has printed but no candle has closed against it, so
          the leg above is dashed (legDash) — its line follows the
