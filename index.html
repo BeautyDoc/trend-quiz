@@ -993,6 +993,7 @@ function analyze(chart, lineMode) {
   var pendingEsts = [];   // third segments completed but not yet confirmed in real time {extremeIdx, confirmIdx, dir, ...} — replay narration only
   var pendingCtrls = [];  // control relocations (new extreme / deeper correction) printed but not yet confirmed in real time {printIdx, confirmIdx, never, kind, ...} — replay narration only
   var pendingNever = null; // the pendingCtrls entry, if any, whose leg never confirms before the chart ends and whose points are still in force
+  var sumChain = null; // the Segment Summary's open post-break segment step {key, ev, gapSw} — consecutive ranges of ONE swing leg merge into it (see the narration block)
   var innerFormed = false, confirmedReversal = false, everTrended = false;
   var spentNearIdx = [];   // swing idxs that may never again serve as a pattern's near swing: every established pattern's near swing, and both control swings of every trend that dies (see the establishment call)
   var lastBreakSeg = -1, pokeDone = false;
@@ -1472,7 +1473,7 @@ function analyze(chart, lineMode) {
      or bodies. Line view runs the same code over closes-only swings;
      it has no gap swings, so the gap wording below can never occur
      there. */
-  function segmentCaption(si, endSw, gapSw, dirSign, farP0) {
+  function segmentCaption(si, endSw, gapSw, dirSign, farP0, leg) {
     /* The segment's direction is its end swing's direction whenever it
        has one — the derivation defines a segment by its swing. (A
        counter-gap segment's closes can net the other way: it gapped
@@ -1544,7 +1545,22 @@ function analyze(chart, lineMode) {
       var count = legOrdinalSince(si, endSw ? endSw.type : (dirSign > 0 ? "high" : "low"),
                                    anchorPosOf(dead.nearSnap, dead.dir));
       if (count == null) count = si - lastBreakSeg + 1;
-      var head = gapTxt + rangeTxt + (up ? " rise" : " fall") + " to " + fmt(ext.price) +
+      /* The step is written over the whole swing leg, not this one
+         range: when the leg spans several ranges, the span runs
+         from the leg's first candle (the same start the replay's
+         leg spans use) to this range's end, and a gap swing the
+         leg opened with is named even when it printed in an
+         earlier range of the leg. */
+      var headGap = gapTxt, headRange = rangeTxt;
+      if (leg) {
+        headRange = "Candles " + (leg.from + 1) + "–" + (range.to + 1);
+        if (leg.gapSw && leg.gapSw !== gapSw && !lineMode) {
+          headGap = "Candle " + (leg.gapSw.idx + 1) + " gapped " +
+            (leg.gapSw.type === "low" ? "down" : "up") + " to " + fmt(leg.gapSw.price) +
+            " — a gap counts as a segment all by itself. " + gapTxt;
+        }
+      }
+      var head = headGap + headRange + (up ? " rise" : " fall") + " to " + fmt(ext.price) +
         " at candle " + (ext.idx + 1) + ". Counted from the old " + dw.trend +
         "'s final extreme — the " + dw.near + " at " + fmt(dead.nearSnap.price) +
         " — this is directional segment " + count + " since the break. ";
@@ -1714,14 +1730,90 @@ function analyze(chart, lineMode) {
         narrated = true; break;
       }
     }
+    /* Post-break segment steps are built from the swing legs — the
+       same spans the replay's formingCaption uses — not from the
+       raw range table: a leg the derivation split into two ranges
+       at a bare boundary (no swing, no counter-close, no event)
+       is ONE segment, and the Summary must not restart it mid-leg
+       (chart e54kyf, Michael's catch, Oct 28, 2026: one up leg off
+       the break counted twice, as candles 18–23 and again as
+       24–26, while the replay told it as one leg, candles 17–26).
+       lgKey identifies this range's leg — break episode, anchor,
+       and the leg's ordinal since the anchor, the count
+       segmentCaption itself uses — and lgFrom is the leg's first
+       candle, read off the swing that launched it exactly as the
+       replay's legFromIdx reads it. When the previous segment
+       step is this same leg still open (sumChain, and nothing has
+       been pushed since), the new range's narration REPLACES that
+       step — moved to this range's terminal point with this
+       moment's lines — instead of adding a second step for the
+       same leg. Only the post-break, no-trend branch merges: it
+       is the one segmentCaption writes in leg counts. */
+    var lgKey = null, lgFrom = null;
+    if (!narrated && !trend && breaks.length && si >= 2) {
+      var lgDead = null;
+      for (var ldi = episodes.length - 1; ldi >= 0; ldi--) {
+        if (episodes[ldi].brokenAt != null) { lgDead = episodes[ldi]; break; }
+      }
+      if (lgDead) {
+        var lgAPos = anchorPosOf(lgDead.nearSnap, lgDead.dir);
+        /* The leg's direction exactly as segmentCaption resolves
+           it for its own count — end swing first, then the range's
+           net direction, then the gap swing, defaulting up. A raw
+           dirSign of 0 (a one-candle Line-mode range reads flat)
+           must NOT fall through to "low" here: the caption counts
+           that range as an up leg, and keying it as the down leg
+           before it would merge two different legs into one step. */
+        var lgDir = endSw ? (endSw.type === "high" ? 1 : -1)
+          : dirSign ? dirSign
+          : (gapSw ? (gapSw.type === "low" ? 1 : -1) : 1);
+        var lgType = lgDir > 0 ? "high" : "low";
+        var lgCnt = legOrdinalSince(si, lgType, lgAPos);
+        var lgTgt = lgCnt != null ? legTargetSwing(si, lgType) : null;
+        if (lgTgt) {
+          var lgTp = swingsFull.indexOf(lgTgt);
+          var lgPrev = lgTp > 0 ? swingsFull[lgTp - 1] : null;
+          lgFrom = lgPrev ? legStartIdx(lgPrev, range.to) : range.from;
+          lgKey = lastBreakSeg + ":" + lgAPos + ":" + lgCnt;
+        }
+      }
+    }
+    var chainHit = !!(lgKey && sumChain && sumChain.key === lgKey &&
+                      events.length && events[events.length - 1] === sumChain.ev);
     if (!narrated && si === totalSegs - 1 && patternNow &&
         patternNow.nearSw.seg === si && patternNow.nearSw.idx === termIdx) {
       /* The chart ends on the pattern's third leg: it never
-         finished, so this step narrates why there is no trend. */
-      pushEvent("segment", termIdx, unfinishedCaption(si, patternNow));
+         finished, so this step narrates why there is no trend.
+         When the leg's earlier ranges already opened a step for
+         it, that step is this leg's — replace it rather than
+         tell the same leg twice. */
+      var uCap = unfinishedCaption(si, patternNow);
+      if (chainHit) {
+        sumChain.ev.idx = termIdx;
+        sumChain.ev.caption = uCap;
+        sumChain.ev.lines = snapshot(termIdx);
+      } else {
+        pushEvent("segment", termIdx, uCap);
+      }
+      sumChain = null;
       narrated = true;
     }
-    if (!narrated) pushEvent("segment", termIdx, segmentCaption(si, endSw, gapSw, dirSign, farP0));
+    if (!narrated) {
+      var legArg = lgKey
+        ? { from: lgFrom, gapSw: (chainHit && sumChain.gapSw) ? sumChain.gapSw : gapSw }
+        : null;
+      var sCap = segmentCaption(si, endSw, gapSw, dirSign, farP0, legArg);
+      if (chainHit) {
+        sumChain.ev.idx = termIdx;
+        sumChain.ev.caption = sCap;
+        sumChain.ev.lines = snapshot(termIdx);
+      } else {
+        pushEvent("segment", termIdx, sCap);
+        sumChain = lgKey ? { key: lgKey, ev: events[events.length - 1], gapSw: gapSw } : null;
+      }
+    } else {
+      sumChain = null;
+    }
   }
 
   var answer = trend ? trend : "consolidation";
