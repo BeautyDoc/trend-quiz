@@ -877,6 +877,113 @@ function analyze(chart, lineMode) {
     return !!sw.gap || !!gapOrigin[sw.idx + "|" + sw.price + "|" + sw.type];
   }
 
+  /* ---- unified swing-leg bookkeeping ----
+     segRanges are body-run ranges: a recipe boundary or a counter-gap
+     split can cut one swing leg into two ranges, and one range can
+     carry two swings (a gap swing and its own end swing). The pattern
+     engine reads SWING LEGS — the travel between consecutive surviving
+     swings — so every narration that names a segment or counts
+     segments since a break must read the same legs, or the captions
+     disagree with the swings they describe (chart a450wv, Michael's
+     catch, Oct 27, 2026: the post-break down leg runs candles 21–26 —
+     the gap candle's body opens it — but its ranges are 21–22 and
+     23–26, so the Summary called candles 21–22 "segment 1 since the
+     break" and the replay called candles 23–26 "the third segment",
+     dropping candles 21–22 from the leg entirely). The helpers below
+     are that single source: a leg's candle span starts at the swing
+     that launched it (the swing candle itself when the swing price is
+     that candle's open-side body point — a gap swing at the gap edge —
+     the candle after otherwise, the same convention the crossing
+     windows scan from), and a range's leg is identified by the
+     surviving swing its travel merges into. */
+  var swingsFull = [chart.initialSwing].concat(chart.swingEvents);
+  function legStartIdx(sw, maxIdx) {
+    var i = sw.idx;
+    var from = (candles[i] && candles[i].o === sw.price) ? i : i + 1;
+    return Math.min(from, maxIdx);
+  }
+  /* Position in swingsFull of an episode's near-control snapshot —
+     the dead trend's final extreme, the anchor post-break segments
+     are counted from. -1 when it cannot be found. */
+  function anchorPosOf(snap, dir) {
+    var t = dir === "up" ? "high" : "low";
+    for (var i = swingsFull.length - 1; i >= 0; i--) {
+      var e = swingsFull[i];
+      if (e.idx === snap.idx && e.price === snap.price && e.type === t) return i;
+    }
+    return -1;
+  }
+  /* The surviving swing a range's travel belongs to: its own end
+     swing when it kept one; the later same-type swing its end swing
+     merged into when the leg spans several ranges (the merged swing
+     carries the last contributing range's index); its gap swing when
+     the range kept nothing else; an earlier same-type swing when its
+     end swing merged backward into a leg already under way. */
+  function legTargetSwing(si, endType) {
+    /* The surviving swing a range's travel merges into: its own end
+       swing when it kept one; the later same-type swing its end
+       swing merged into when the leg spans several ranges (the
+       merged swing carries the last contributing range's index);
+       its gap swing when the range kept nothing else; an earlier
+       same-type swing when its end swing merged backward into a leg
+       already under way. Searched over swingsFull, not just the
+       swing events: a range whose end swing merged into the INITIAL
+       swing (the derivation stamps the absorbing swing with the
+       range's index) resolves to that swing, whose ordinal is then
+       null and the caller falls back — the chart's opening ranges
+       keep their opening count rather than borrowing a later leg's. */
+    var evs = swingsFull, i;
+    for (i = 0; i < evs.length; i++) if (evs[i].seg === si && evs[i].type === endType) return evs[i];
+    for (i = 0; i < evs.length; i++) if (evs[i].seg > si && evs[i].type === endType) return evs[i];
+    for (i = 0; i < evs.length; i++) if (evs[i].seg === si) return evs[i];
+    for (i = evs.length - 1; i >= 0; i--) if (evs[i].seg < si && evs[i].type === endType) return evs[i];
+    return null;
+  }
+  /* How many swing legs have printed since the anchor swing, up to
+     and including the leg range si's travel belongs to — the count
+     every "segment N since the break" caption must use. Null when it
+     cannot be resolved, and the caller falls back to its old count. */
+  function legOrdinalSince(si, endType, anchorPos) {
+    if (anchorPos < 0 || !endType) return null;
+    var t = legTargetSwing(si, endType);
+    if (t) {
+      var p = swingsFull.indexOf(t);
+      /* A forward same-type match can skip a leg: when the range's
+         end swing was DROPPED as a less-extreme continuation of the
+         previous same-type swing, the next same-type swing sits a
+         whole leg beyond the next swing of any type — and it is
+         that next swing's leg this range's travel belongs to (the
+         new leg forming inside the old one's span), not the leg
+         after it. A true forward merge's target IS the next swing,
+         so the clamp changes nothing there. */
+      for (var i = 0; i < swingsFull.length; i++) {
+        if (swingsFull[i].seg > si) { if (p > i) p = i; break; }
+      }
+      return p > anchorPos ? p - anchorPos : null;
+    }
+    /* The range kept no swing and none of its type follows: it is
+       an unfinished final leg, counted one past the last swing. */
+    var un = swingsFull.length - anchorPos;
+    return un > 0 ? un : null;
+  }
+  /* The leg under way at a range's START: the ordinal of the first
+     surviving swing the range carries, counted since the anchor.
+     A range can carry two swings — a gap swing and its own end
+     swing, two different legs — and the leg a frame at the range's
+     start belongs to is the first of them (the gap leg), not the
+     end swing's leg, which only starts travelling once the gap
+     swing has printed. A range that kept no swing of its own
+     resolves through legTargetSwing like any other range. */
+  function legOrdinalAtRangeStart(si, endType, anchorPos) {
+    if (anchorPos < 0) return null;
+    for (var i = 0; i < swingsFull.length; i++) {
+      if (swingsFull[i].seg === si) {
+        return i > anchorPos ? i - anchorPos : null;
+      }
+    }
+    return legOrdinalSince(si, endType, anchorPos);
+  }
+
   var swingsAll = [chart.initialSwing];
   var trend = null, near = null, far = null;
   var episodes = [];   // {dir, nearSnap, farSnap, brokenAt}
@@ -887,6 +994,7 @@ function analyze(chart, lineMode) {
   var pendingCtrls = [];  // control relocations (new extreme / deeper correction) printed but not yet confirmed in real time {printIdx, confirmIdx, never, kind, ...} — replay narration only
   var pendingNever = null; // the pendingCtrls entry, if any, whose leg never confirms before the chart ends and whose points are still in force
   var innerFormed = false, confirmedReversal = false, everTrended = false;
+  var spentNearIdx = [];   // swing idxs that may never again serve as a pattern's near swing: every established pattern's near swing, and both control swings of every trend that dies (see the establishment call)
   var lastBreakSeg = -1, pokeDone = false;
   var unfinished = null;   // a three-segment pattern whose third leg is the chart's final segment
   var deferredFar = null;  // a far relocation whose print candle overshoots into the next segment {sw, legDir} — see relocateFar
@@ -922,6 +1030,7 @@ function analyze(chart, lineMode) {
     var dir = trend, w = dirWords(dir);
     var ep = episodes[episodes.length - 1];
     ep.nearSnap = near; ep.farSnap = far; ep.brokenAt = i;
+    spentNearIdx.push(near.idx); spentNearIdx.push(far.idx);
     breaks.push({ idx: i, seg: si, level: far.price, dir: dir, close: close });
     lastBreakSeg = si;
     trend = null;
@@ -943,6 +1052,7 @@ function analyze(chart, lineMode) {
     var dir = trend, w = dirWords(dir);
     var ep = episodes[episodes.length - 1];
     ep.nearSnap = near; ep.farSnap = far; ep.brokenAt = i;
+    spentNearIdx.push(near.idx); spentNearIdx.push(far.idx);
     breaks.push({ idx: i, seg: si, level: far.price, dir: dir, close: openPrice, gap: true });
     lastBreakSeg = si;
     trend = null;
@@ -1012,6 +1122,7 @@ function analyze(chart, lineMode) {
       " — a gap counts as a segment all by itself, so the control sits at the gap price.";
   }
   function establish(dir, nearSw, farSw, si, brokeHere) {
+    spentNearIdx.push(nearSw.idx);
     trend = dir;
     near = { price: nearSw.price, idx: nearSw.idx, kind: "near" };
     far = { price: farSw.price, idx: farSw.idx, kind: "far", gapMoved: gapPriced(farSw) };
@@ -1042,7 +1153,36 @@ function analyze(chart, lineMode) {
        complete when the break landed, so the spot confirmation
        stands. */
     var brk = breaks.length ? breaks[breaks.length - 1] : null;
-    var spotConfirm = brokeHere && brk &&
+    /* The spot confirmation is a REVERSAL story — counter-segments
+       completed inside an old trend's range, confirmed by the close
+       that killed that trend — so it may fire only when this
+       segment's break killed a trend running the OTHER way
+       (brk.dir !== dir), and only when the confirming close itself
+       holds on the living side of the new far control. (Chart
+       az3v55, Michael's catch, Oct 27, 2026: a first-ever up
+       pattern completed at candle 19 and was established the plain
+       way; candle 20 then gapped straight through its Higher Low,
+       killing the newborn trend at the gap. The pattern window was
+       still the last four swings at the next segment's end, so
+       establish ran a second time with brokeHere true and
+       nearSw.seg !== si, and the old gate stamped the pair back in
+       as a "confirmed reversal" — over a chart with no old trend
+       for anything to be a counter-segment of, on a "confirming"
+       close, 233.15, that sat beyond the very Higher Low, 237.46,
+       it was said to install. The trend then had to die a second
+       time, four candles later.) A confirming close across the new
+       far line means the pair never governed a single close — the
+       trend is stillborn, not spot-confirmed — so such an
+       establishment takes the plain path: stamped at its
+       confirmation close and judged by the ordinary break checks,
+       exactly like any other. The spent-window guard at the call
+       site (spentNearIdx) stops the az3v55 re-run itself; these
+       two conditions state the doctrine the shortcut may not
+       cross even on a first run. */
+    var confirmHolds = brk && (dir === "up"
+      ? (brk.close >= farSw.price && candles[brk.idx].c >= farSw.price)
+      : (brk.close <= farSw.price && candles[brk.idx].c <= farSw.price));
+    var spotConfirm = brokeHere && brk && brk.dir !== dir && confirmHolds &&
       (nearSw.seg !== si ||
        (nearSw.gap && gapLegConfirm(nearSw) !== -1 && gapLegConfirm(nearSw) <= brk.idx));
     if (spotConfirm) {
@@ -1077,13 +1217,18 @@ function analyze(chart, lineMode) {
        completes the pattern it summarizes. */
     var stampIdx = spotConfirm ? brk.idx
                                 : firstAgainstClose(segRanges[si].to + 1, dir);
+    /* The third leg's candle span, read from the swing that launched
+       it — not from this range's start: the leg can span several
+       ranges (see the unified swing-leg bookkeeping above), and its
+       first range can begin well before this one. */
+    var legFrom = legStartIdx(farSw, segRanges[si].to);
     ctrlLog.push({
       idx: stampIdx,
       kind: spotConfirm ? "confirmed" : "establish", trend: dir,
       near: { price: near.price, idx: near.idx }, far: { price: far.price, idx: far.idx },
       activeShown: stampIdx > nearSw.idx,
       farGap: gapPriced(farSw), farType: farSw.type,
-      segFrom: segRanges[si].from, segTo: segRanges[si].to,
+      segFrom: legFrom, segTo: segRanges[si].to,
       lines: events[events.length - 1].lines
     });
     if (!spotConfirm) {
@@ -1091,7 +1236,7 @@ function analyze(chart, lineMode) {
         extremeIdx: nearSw.idx, confirmIdx: stampIdx, dir: dir,
         nearPrice: nearSw.price, farPrice: farSw.price,
         farGap: gapPriced(farSw), farIdx: farSw.idx, farType: farSw.type,
-        segFrom: segRanges[si].from, segTo: segRanges[si].to, never: false
+        segFrom: legFrom, segTo: segRanges[si].to, never: false
       });
     }
   }
@@ -1391,7 +1536,14 @@ function analyze(chart, lineMode) {
         if (episodes[di].brokenAt != null) { dead = episodes[di]; break; }
       }
       var dw = dirWords(dead.dir);
-      var count = si - lastBreakSeg + 1;
+      /* Counted in swing legs from the dead trend's final extreme —
+         the anchor the caption names — not in ranges since the break
+         segment: a leg split into two ranges is still one segment,
+         and a gap inside the break segment is a segment of its own
+         (see the unified swing-leg bookkeeping above). */
+      var count = legOrdinalSince(si, endSw ? endSw.type : (dirSign > 0 ? "high" : "low"),
+                                   anchorPosOf(dead.nearSnap, dead.dir));
+      if (count == null) count = si - lastBreakSeg + 1;
       var head = gapTxt + rangeTxt + (up ? " rise" : " fall") + " to " + fmt(ext.price) +
         " at candle " + (ext.idx + 1) + ". Counted from the old " + dw.trend +
         "'s final extreme — the " + dw.near + " at " + fmt(dead.nearSnap.price) +
@@ -1412,7 +1564,7 @@ function analyze(chart, lineMode) {
   function unfinishedCaption(si, pat) {
     var w = dirWords(pat.dir);
     var range = segRanges[si];
-    var txt = "Candles " + (range.from + 1) + "–" + (range.to + 1) + " complete the third " +
+    var txt = "Candles " + (legStartIdx(pat.farSw, range.to) + 1) + "–" + (range.to + 1) + " complete the third " +
       "segment: the push to the " + w.near + " at " + fmt(pat.nearSw.price) + " (candle " +
       (pat.nearSw.idx + 1) + ") finishes a pattern of " + w.pattern + ". But the chart ends " +
       "with that third leg still in place — a trend counts only once the third segment has " +
@@ -1506,7 +1658,7 @@ function analyze(chart, lineMode) {
         extremeIdx: patternNow.nearSw.idx, confirmIdx: -1, dir: patternNow.dir,
         nearPrice: patternNow.nearSw.price, farPrice: patternNow.farSw.price,
         farGap: gapPriced(patternNow.farSw), farIdx: patternNow.farSw.idx, farType: patternNow.farSw.type,
-        segFrom: segRanges[si].from, segTo: segRanges[si].to, never: true
+        segFrom: legStartIdx(patternNow.farSw, segRanges[si].to), segTo: segRanges[si].to, never: true
       });
     }
     /* Establishment, under the completion rule: a trend is
@@ -1522,7 +1674,25 @@ function analyze(chart, lineMode) {
        segment also broke the old trend over a pattern that had
        formed inside its range, the break confirms the new trend
        (brokeHere, as before). */
-    if (patternNow && si < totalSegs - 1) {
+    /* A completed pattern is acted on at most once, and a dead
+       trend's own window never re-establishes it. When the segment
+       in which a trend dies prints no swing of its own, the same
+       four-swing window is still showing at that segment's end —
+       the dead trend's own final pattern, its near swing the very
+       control the trend died holding (the establishing swing
+       itself, chart az3v55, or a later extreme that relocated the
+       near control, chart xn13yv) — and acting on it would install
+       the dead trend's pair a second time over its own break,
+       there to die a second time a candle or two later. So a
+       window whose near swing was already acted on, or served as
+       either control of a trend that has died, is simply spent
+       (spentNearIdx, fed by establish and by both break paths).
+       A genuinely new pattern — three fresh legs after the break,
+       or a counter-pattern formed inside a live trend's range —
+       always carries a near swing that is none of those, so the
+       guard costs it nothing. */
+    if (patternNow && si < totalSegs - 1 &&
+        spentNearIdx.indexOf(patternNow.nearSw.idx) < 0) {
       establish(patternNow.dir, patternNow.nearSw, patternNow.farSw, si, lastBreakSeg === si);
     }
     /* Segment Summary narration for this segment: exactly one step at the
@@ -2011,14 +2181,73 @@ function analyze(chart, lineMode) {
        candle opens a new segment and closes — or gaps — against
        the previous one's direction, the same test
        firstAgainstClose applies. */
-    var completes = false;
+    var closesAgainst = false;
     if (fi === range.from && r > 0 && fi > 0) {
       var pd = rangeDirOf(segRanges[r - 1]);
       var bs = Math.sign(candles[fi].c - candles[fi].o);
       var gapped = pd > 0 ? candles[fi].o < candles[fi - 1].c
                           : pd < 0 ? candles[fi].o > candles[fi - 1].c : false;
-      completes = pd !== 0 && ((bs !== 0 && bs !== pd) || gapped);
+      closesAgainst = pd !== 0 && ((bs !== 0 && bs !== pd) || gapped);
     }
+    /* Segments are counted in swing legs, not ranges (see the
+       unified swing-leg bookkeeping above): a new range inside the
+       same leg does not complete anything, and a leg spanning two
+       ranges counts once. legCount resolves a range's leg number
+       since an anchor swing; legSpanText gives a leg's candle span
+       for the completion sentences. Both fall back to the range
+       bookkeeping when a leg cannot be resolved. */
+    /* A range's direction read the way the derivation reads a
+       gap-open segment's first candle: from the previous close, gap
+       included — a candle that gaps up then closes down a little
+       still travels UP, and its leg is the up leg it opens. */
+    function legDirOf(rr) {
+      var rg = segRanges[rr];
+      var ref = rg.from > 0 ? candles[rg.from - 1].c : candles[rg.from].o;
+      var d = candles[rg.to].c - ref;
+      return d > 0 ? 1 : d < 0 ? -1 : 0;
+    }
+    function legCount(rr, anchorPos) {
+      var d = legDirOf(rr);
+      var endType = d > 0 ? "high" : d < 0 ? "low" : null;
+      /* Past the range's first swing candle, the leg under way is
+         the range's end-travel leg (a gap swing at the range's first
+         candle is a finished segment by then, and the travel that
+         follows it is the next leg); at or before it, the leg under
+         way is the first swing's. */
+      var first = null, i2;
+      for (i2 = 0; i2 < swingsFull.length; i2++) {
+        if (swingsFull[i2].seg === rr) { first = swingsFull[i2]; break; }
+      }
+      if (first && fi > first.idx) {
+        var o = legOrdinalSince(rr, endType, anchorPos);
+        if (o != null) return o;
+      }
+      return legOrdinalAtRangeStart(rr, endType, anchorPos);
+    }
+    /* The first candle of the leg a range's travel belongs to:
+       a leg spanning several ranges starts in an earlier one, and
+       the "under way" sentences below name the leg's span, not the
+       range's — a range boundary inside one leg restarts nothing
+       (chart az3v55: the fall from the gap break at candle 20 is
+       one leg across two ranges, and its frames must not restart
+       the span at the second range's first candle, 24). */
+    function legFromIdx(rr) {
+      var d = legDirOf(rr);
+      var t = legTargetSwing(rr, d > 0 ? "high" : d < 0 ? "low" : null);
+      if (!t) return segRanges[rr].from;
+      var p = swingsFull.indexOf(t);
+      var prev = p > 0 ? swingsFull[p - 1] : null;
+      return prev ? legStartIdx(prev, segRanges[rr].to) : segRanges[rr].from;
+    }
+    function legSpanText(rr) {
+      return (legFromIdx(rr) + 1) + "–" + (segRanges[rr].to + 1);
+    }
+    /* A close against the previous range completes a segment only
+       when that range was the end of its leg — a range boundary
+       inside one leg (a recipe split, a counter-gap split) completes
+       nothing. Resolved per branch below, where the anchor is known:
+       completes = closesAgainst && the two ranges are in different
+       legs. */
     if (afterBreak) {
       var b = null, dead = null, bi, ei;
       for (bi = breaks.length - 1; bi >= 0; bi--) if (breaks[bi].idx <= fi) { b = breaks[bi]; break; }
@@ -2030,13 +2259,16 @@ function analyze(chart, lineMode) {
       var dw = dirWords(dead.dir);
       var anchor = "the old " + dw.trend + "'s final extreme — the " + dw.near +
         " at " + fmt(dead.nearSnap.price);
-      var count = r - b.seg + 1;
+      var anchorPos = anchorPosOf(dead.nearSnap, dead.dir);
+      var count = legCount(r, anchorPos);
+      if (count == null) count = r - b.seg + 1;
+      var prevCountB = r > 0 ? legCount(r - 1, anchorPos) : null;
+      var completes = closesAgainst && (prevCountB == null || prevCountB !== count);
       if (count < 1) return null;
       if (completes && count >= 2) {
-        var pr = segRanges[r - 1];
         var done = count - 1;
         var txt = headCore + " — the first close against the previous move, so segment " +
-          done + " since the break (candles " + (pr.from + 1) + "–" + (pr.to + 1) + ") is " +
+          done + " since the break (candles " + legSpanText(r - 1) + ") is " +
           "complete, counted from " + anchor + ". ";
         if (done >= 3) {
           return txt + "Three or more directional segments have now printed since the break, " +
@@ -2051,29 +2283,31 @@ function analyze(chart, lineMode) {
       }
       if (count >= 3) {
         return headCore + ". Segment " + count + " since the break is under way (candles " +
-          (range.from + 1) + "–" + (fi + 1) + " so far), counted from " + anchor + ". Three or " +
+          (legFromIdx(r) + 1) + "–" + (fi + 1) + " so far), counted from " + anchor + ". Three or " +
           "more directional segments have printed since the break, but they have not completed " +
           "a new trend pattern, so the market stays in consolidation — no live control points.";
       }
       return headCore + ". Segment " + count + " since the break is under way — candles " +
-        (range.from + 1) + "–" + (fi + 1) + " so far, " + move + " — counted from " + anchor + ". " +
+        (legFromIdx(r) + 1) + "–" + (fi + 1) + " so far, " + move + " — counted from " + anchor + ". " +
         "A new trend needs three directional segments, so " + (3 - count) + " more to go — " +
         "no live control points yet.";
     }
     /* Before any trend or break: the same narration for the chart's
        opening segments, while the count can still reach three. */
-    var countP = r + 1;
-    if (completes && countP >= 2 && countP <= 3) {
-      var prP = segRanges[r - 1];
+    var countP = legCount(r, 0);
+    if (countP == null) countP = r + 1;
+    var prevCountP = r > 0 ? legCount(r - 1, 0) : null;
+    var completesP = closesAgainst && (prevCountP == null || prevCountP !== countP);
+    if (completesP && countP >= 2 && countP <= 3) {
       return headCore + " — the first close against the previous move, so segment " +
-        (countP - 1) + " (candles " + (prP.from + 1) + "–" + (prP.to + 1) + ") is complete. " +
+        (countP - 1) + " (candles " + legSpanText(r - 1) + ") is complete. " +
         "Segment " + countP + " of the three a trend needs is now under way" +
         (countP === 3 ? " — and it counts only once it has ended and a fourth segment has begun" : "") +
         ". No trend yet, so there are no control points.";
     }
     if (countP > 3) return null;
     return headCore + ". Segment " + countP + " of the three a trend needs is under way — " +
-      "candles " + (range.from + 1) + "–" + (fi + 1) + " so far, " + move + ". No trend yet: " +
+      "candles " + (legFromIdx(r) + 1) + "–" + (fi + 1) + " so far, " + move + ". No trend yet: " +
       "control points exist only once a third segment has ended and a fourth has begun.";
   }
   var frames = [];
@@ -2434,11 +2668,41 @@ function analyze(chart, lineMode) {
       fcap = pokeCapByIdx[fi];
     } else if (curSt && curSt.trend) {
       xw = dirWords(curSt.trend);
-      fcap = "Candle " + (fi + 1) + " closed at " + fmt(candles[fi].c) + ", " + xw.inside +
-        " the far control (the " + xw.far + ", " + abbrOf(curSt.trend, "far") + ", at " +
-        fmt(curSt.far.price) + ") and with no new extreme beyond the near control (the " + xw.near +
-        ", " + abbrOf(curSt.trend, "near") + ", at " + fmt(curSt.near.price) +
-        ") — so neither control point moves on this close.";
+      /* This note's claims are COMPUTED from this candle's actual
+         prices against the control lines on the frame, never
+         assumed from the state alone: a frame whose state and
+         prices ever disagree must say what the prices did, not
+         recite the premise the state implies. (Chart az3v55: a
+         phantom "confirmed" entry held the state at up for three
+         frames while the closes sat below the Higher Low, and the
+         old template asserted each was "above the far control" —
+         the same assumed-premise disease as chart da75dv's
+         relocation caption.) */
+      var closeFi = candles[fi].c;
+      var farTxt = "the far control (the " + xw.far + ", " + abbrOf(curSt.trend, "far") +
+        ", at " + fmt(curSt.far.price) + ")";
+      var nearTxt = "the near control (the " + xw.near + ", " + abbrOf(curSt.trend, "near") +
+        ", at " + fmt(curSt.near.price) + ")";
+      var closeIn = curSt.trend === "up" ? closeFi >= curSt.far.price
+                                         : closeFi <= curSt.far.price;
+      var bodyExtFi = curSt.trend === "up" ? Math.max(candles[fi].o, closeFi)
+                                           : Math.min(candles[fi].o, closeFi);
+      var pastNear = curSt.trend === "up" ? bodyExtFi > curSt.near.price
+                                          : bodyExtFi < curSt.near.price;
+      if (!closeIn) {
+        fcap = "Candle " + (fi + 1) + " closed at " + fmt(closeFi) + ", " + xw.beyond + " " +
+          farTxt + " — a close beyond the far control is the close that breaks the " +
+          xw.trend + ", so the control points no longer stand on this close.";
+      } else if (pastNear) {
+        fcap = "Candle " + (fi + 1) + " closed at " + fmt(closeFi) + ", " + xw.inside + " " +
+          farTxt + ", but its body reached past " + nearTxt + " — a new extreme in the " +
+          "making: the near control moves only once that leg's swing is confirmed at a " +
+          "close against it, so neither control point moves on this close.";
+      } else {
+        fcap = "Candle " + (fi + 1) + " closed at " + fmt(closeFi) + ", " + xw.inside + " " +
+          farTxt + " and with no new extreme beyond " + nearTxt +
+          " — so neither control point moves on this close.";
+      }
     } else if (breaksSeen > 0) {
       fcap = formingCaption(fi, true) ||
         ("Candle " + (fi + 1) + " closed at " + fmt(candles[fi].c) +
@@ -4491,5 +4755,5 @@ function renderResults() {
 
 renderIntro();
 </script>
-<script>document.addEventListener("DOMContentLoaded",function(){function kill(){document.querySelectorAll("[data-dl]").forEach(function(e){e.remove()});}kill();try{new MutationObserver(kill).observe(document.documentElement,{childList:true,subtree:true});}catch(e){}});</script></body>
+<script>document.addEventListener('DOMContentLoaded',function(){document.querySelectorAll('[data-dl]').forEach(function(e){e.remove();});});</script></body>
 </html>
