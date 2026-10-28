@@ -216,6 +216,16 @@
         background:var(--card); border:1px solid var(--line); border-radius:10px;
         padding:16px; width:100%; max-width:680px;
       }
+      /* The build stamp at the foot of the start screen: quiet, but
+         visible in a screenshot, so an out-of-date copy names itself. */
+      .buildstamp{
+        margin:16px 0 0; font-size:14px; color:var(--muted); text-align:center;
+      }
+      .about-panel p{ margin:8px 0; }
+      .about-panel h3{ margin:16px 0 4px; font-size:17px; }
+      .about-panel ul{ margin:8px 0 0; padding-left:20px; }
+      .about-panel li{ margin:6px 0; }
+      .about-panel a{ color:var(--accent); font-weight:600; }
       @media (prefers-reduced-motion: reduce){ .bar > div{ transition:none; } }
     </style>
   <style>[data-dl]{display:none!important}</style></head>
@@ -226,6 +236,15 @@
 /* Capture this page's own source before anything renders, so the
    "Download a standalone copy" button can hand back the identical file. */
 var PRISTINE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
+
+/* ---------------- version ----------------
+   The build stamp, in one place only: bump QUIZ_VERSION (and the
+   date) on every future build. The start screen shows it, the About
+   panel quotes it, and screenshots carry it — so a stale copy (an
+   old saved file, the Netlify backup, an older shared link) can be
+   told apart from the current build at a glance. */
+var QUIZ_VERSION = "v2026.10.28.1";
+var QUIZ_BUILD_DATE = "October 28, 2026";
 
 /* ---------------- utilities ---------------- */
 /* Every random draw in chart generation goes through RNG(), which is
@@ -4304,6 +4323,67 @@ function bindLegendButtons() {
   for (var i = 0; i < els.length; i++) els[i].addEventListener("click", showLegend);
 }
 
+/* The About panel: the build's version and date, what changed in
+   this build, known issues and what's coming, and a contact email.
+   An overlay like the Rules and legend panels — it opens on top of
+   the current screen (start, question, Segment Summary, replay,
+   results), changes nothing underneath, and dismisses the same
+   ways: the Close button, a tap on the dimmed surround, or Escape.
+   The version and date come from the QUIZ_VERSION / QUIZ_BUILD_DATE
+   constants at the top of the script, so the panel can never drift
+   from the build it rides in. */
+function showAbout() {
+  if (document.getElementById("aboutOverlay")) return;
+  var ov = document.createElement("div");
+  ov.className = "rules-overlay";
+  ov.id = "aboutOverlay";
+  ov.innerHTML =
+    '<div class="rules-panel about-panel" role="dialog" aria-modal="true" aria-label="About Trend Quiz">' +
+    '<div class="bd-head"><h2>About Trend Quiz</h2>' +
+    '<button class="btn" id="aboutClose">Close</button></div>' +
+    "<p><strong>Version " + QUIZ_VERSION + "</strong> · Built " + QUIZ_BUILD_DATE + "</p>" +
+    "<p>This quiz teaches the Trade Phantoms Essentials trend rules — it is a study tool " +
+    "for practising how to read the state of a market from a chart.</p>" +
+    "<h3>What's new in this build</h3>" +
+    "<ul>" +
+    "<li><strong>Trend establishment, per Mr. Black's ruling (October 28, 2026):</strong> a trend " +
+    "is called as soon as the third segment crosses the first segment's extreme, completing the " +
+    "zigzag — even while that third segment is still active, not fully formed. In the " +
+    "Control-point replay the trend now appears at the cross candle, not at the segment's end.</li>" +
+    "<li>Gap-born legs now step through every candle close instead of cutting straight across.</li>" +
+    "<li>Near-doji candle bodies are drawn with a visible body instead of as a hairline.</li>" +
+    "<li>Segment Summary steps no longer split a single swing leg into separate steps.</li>" +
+    "</ul>" +
+    "<h3>Known issues / coming next</h3>" +
+    "<ul>" +
+    "<li>Older copies of the quiz — the Netlify backup, saved standalone files, older shared " +
+    "links — may lag this build and read a chart by older rules. If a chart looks wrong, check " +
+    "the version stamp at the foot of the start screen: this build is " + QUIZ_VERSION + ".</li>" +
+    "<li>Coming next: a plain-English explanation of the far control point in the Rules, and " +
+    "further rule refinements as Mr. Black rules on open questions.</li>" +
+    "</ul>" +
+    "<h3>Contact</h3>" +
+    '<p>Questions, or a chart that looks wrong? Email Michael at ' +
+    '<a href="mailto:mjsmd@bellsouth.net">mjsmd@bellsouth.net</a>.</p>' +
+    "</div>";
+  document.body.appendChild(ov);
+  ov.addEventListener("click", function (e) { if (e.target === ov) closeAbout(); });
+  document.getElementById("aboutClose").addEventListener("click", closeAbout);
+  document.addEventListener("keydown", onAboutKey);
+  var closeBtn = document.getElementById("aboutClose");
+  if (closeBtn && closeBtn.focus) closeBtn.focus();
+}
+function onAboutKey(e) { if (e.key === "Escape") closeAbout(); }
+function closeAbout() {
+  var ov = document.getElementById("aboutOverlay");
+  if (ov) ov.remove();
+  document.removeEventListener("keydown", onAboutKey);
+}
+function bindAboutButtons() {
+  var els = app.querySelectorAll("[data-about]");
+  for (var i = 0; i < els.length; i++) els[i].addEventListener("click", showAbout);
+}
+
 /* ---------------- recently viewed charts ----------------
    A short history of the charts the reader has viewed — every
    chart shown in a set and every chart opened by ID — most recent
@@ -4398,7 +4478,8 @@ function renderIntro() {
     '<label class="gapopt"><input type="checkbox" id="gapMarkChk"' + (SHOW_GAP_MARKERS ? " checked" : "") + '> Show gap markers</label>' +
     '<p class="small">Gap markers draw each gap the way your instructor does — as a plain candle body with no wicks, sitting between the two candles — so the gap stands out as its own mark. Turn it off and a gap shows only as open space between the candles.</p>' +
     '<div class="row"><button class="btn primary" id="start">' + (STYLE_PICK === "expert" ? "Start an Expert run" : "Start a set of 10") + "</button>" +
-    '<a class="btn" data-dl download="trend-quiz.html">Download a standalone copy</a></div>' +
+    '<a class="btn" data-dl download="trend-quiz.html">Download a standalone copy</a>' +
+    '<button class="btn" data-about>About</button></div>' +
     '<p class="small">The download is this same quiz as one file — it opens in any browser and works offline, no internet needed.</p>' +
     '<div class="styleopt"><span class="styleopt-label">Replay a chart</span></div>' +
     '<div class="replayrow"><input class="txtin" id="replayIn" type="text" placeholder="Chart ID, e.g. a3f9k2" autocomplete="off" autocapitalize="none" spellcheck="false" aria-label="Chart ID">' +
@@ -4406,6 +4487,7 @@ function renderIntro() {
     recentHtml() +
     '<p class="small">Every question shows a chart ID under the question number. Enter one here and that exact chart is rebuilt — same candles — as a one-question practice round, shown in the chart style picked above. Pick a different style than the chart was made in and the same candles are re-read by that style\'s rules, so the answer can differ: a candle chart and its Line view do not always agree.</p>' +
     '<p class="err" id="replayErr" hidden></p>' +
+    '<p class="buildstamp">Trend Quiz ' + QUIZ_VERSION + " · Built " + QUIZ_BUILD_DATE + "</p>" +
     "</div>";
   var gapChk = document.getElementById("gapChk");
   gapChk.addEventListener("change", function () { INCLUDE_GAPS = gapChk.checked; });
@@ -4435,6 +4517,7 @@ function renderIntro() {
     renderIntro();
   });
   bindDownloads();
+  bindAboutButtons();
 }
 
 /* Rebuilds the chart named by the start screen's replay field as a
@@ -4544,6 +4627,7 @@ function renderQuestion() {
     '<div id="feedback"></div><div id="bdbox"></div>' +
     "</div>" +
     '<div class="row"><button class="btn" data-rules>Rules</button>' +
+    '<button class="btn" data-about>About</button>' +
     /* Start-screen controls stand at opposite ends of the screen and
        nowhere else: the top bar carries one, this last row carries
        the other — except in the replay round, whose answered view
@@ -4561,6 +4645,7 @@ function renderQuestion() {
   }
   bindDownloads();
   bindRulesButtons();
+  bindAboutButtons();
   bindChartCursors();
   if (review) showFeedback(quiz.answers[quiz.idx] ? quiz.answers[quiz.idx].pick : q.result.answer, true);
 }
@@ -4672,6 +4757,7 @@ function renderBreakdown() {
     '<button class="btn" id="bdClose">Close Segment Summary</button>' +
     INFO_BTN +
     '<button class="btn" data-rules>Rules</button>' +
+    '<button class="btn" data-about>About</button>' +
     '<button class="btn" id="bdHomeBtn">Back to start</button>' +
     "</div>" +
     /* The Segment Summary is the summary layer over the replay's
@@ -4688,6 +4774,7 @@ function renderBreakdown() {
     '<p class="small">Drag across the chart to inspect a candle and read the exact price under the cursor.</p></div>';
   bindRulesButtons();
   bindLegendButtons();
+  bindAboutButtons();
   document.getElementById("bdPrev").addEventListener("click", function () { if (bd.step > 0) { bd.step--; renderBreakdown(); } });
   document.getElementById("bdNext").addEventListener("click", function () { if (bd.step < steps.length - 1) { bd.step++; renderBreakdown(); } });
   document.getElementById("bdClose").addEventListener("click", function () { bd = null; box.innerHTML = ""; });
@@ -4773,6 +4860,7 @@ function renderStepThrough() {
     '<button class="btn" id="stTopHomeBtn">Back to start</button>' +
     INFO_BTN +
     '<button class="btn" data-rules>Rules</button>' +
+    '<button class="btn" data-about>About</button>' +
     "</div>" +
     '<p class="sub">The detail \u2014 the same story close by close, as it stood at each candle\'s close.</p>' +
     '<div class="trend-box"><span class="tb-k">Trend as of candle ' + (st.step + 1) + ':</span>' +
@@ -4796,6 +4884,7 @@ function renderStepThrough() {
     "in the controls above for the full guide to the lines and labels.</p></div>";
   bindRulesButtons();
   bindLegendButtons();
+  bindAboutButtons();
   document.getElementById("stTopHomeBtn").addEventListener("click", function () { renderIntro(); });
   document.getElementById("stPrev").addEventListener("click", function () { stopStepTimer(); if (st && st.step > 0) { st.step--; renderStepThrough(); } });
   document.getElementById("stNext").addEventListener("click", function () { stopStepTimer(); if (st && st.step < st.total - 1) { st.step++; renderStepThrough(); } });
@@ -5158,10 +5247,12 @@ function renderResults() {
     '<div class="row"><button class="btn primary" id="newset">New set — 10 fresh charts</button>' +
     '<button class="btn" id="mainscreen">Main screen</button>' +
     '<button class="btn" data-rules>Rules</button>' +
+    '<button class="btn" data-about>About</button>' +
     '<a class="btn" data-dl download="trend-quiz.html">Download a standalone copy</a></div></div>';
   document.getElementById("newset").addEventListener("click", newSet);
   document.getElementById("mainscreen").addEventListener("click", renderIntro);
   bindRulesButtons();
+  bindAboutButtons();
   var rb = app.querySelectorAll("[data-review]");
   for (var i = 0; i < rb.length; i++) {
     rb[i].addEventListener("click", function () {
