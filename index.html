@@ -243,8 +243,8 @@ var PRISTINE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
    panel quotes it, and screenshots carry it — so a stale copy (an
    old saved file, the Netlify backup, an older shared link) can be
    told apart from the current build at a glance. */
-var QUIZ_VERSION = "v2026.10.28.2";
-var QUIZ_BUILD_DATE = "October 28, 2026";
+var QUIZ_VERSION = "v2026.10.29.1";
+var QUIZ_BUILD_DATE = "October 29, 2026";
 
 /* ---------------- utilities ---------------- */
 /* Every random draw in chart generation goes through RNG(), which is
@@ -3517,6 +3517,32 @@ function chartSVG(q, opts) {
   var pad = (mx - mn) * 0.08 + 0.5; mn -= pad; mx += pad;
   function X(idx) { return padL + (idx + 0.5) * (pw / n); }
   function Y(p) { return padT + (mx - p) / (mx - mn) * ph; }
+  /* Gap notch helpers (October 29, 2026): a through-closes segment
+     line claims to follow price candle by candle, so when a candle
+     in the leg gapped away from the previous candle's close, the
+     path steps first to that candle's gapped open and only then to
+     its close — the vertical jog the candles themselves show —
+     instead of a diagonal that pretends price travelled straight
+     from the previous close to this one. Used ONLY by the
+     through-closes polylines (forming / gap-born legs, gap legs,
+     and the replay's still-forming leg); the straight chord for a
+     completed non-gap leg and Line view's closes-only line are
+     untouched, as is all analysis. */
+  function ptStr(idx, price) { return X(idx).toFixed(1) + "," + Y(price).toFixed(1); }
+  function gappedAt(j) { return j > 0 && Math.abs(candles[j].o - candles[j - 1].c) >= 0.01; }
+  function pushClosePt(arr, j) {
+    if (gappedAt(j)) arr.push(ptStr(j, candles[j].o));
+    arr.push(ptStr(j, candles[j].c));
+  }
+  function pushEndPt(arr, B) {
+    /* The leg's end candle: step to its gapped open only when the
+       endpoint IS that candle's close — when the swing is priced
+       at the open itself (a gap-priced swing) the endpoint already
+       sits on the open, so no duplicate point is emitted. */
+    if (gappedAt(B.idx) && Math.abs(B.price - candles[B.idx].c) < 0.01 &&
+        Math.abs(B.price - candles[B.idx].o) >= 0.01) arr.push(ptStr(B.idx, candles[B.idx].o));
+    arr.push(ptStr(B.idx, B.price));
+  }
   var cw = Math.max(3, (pw / n) * 0.62);
   var out = [];
   var cid = "cg" + (++CHART_SEQ);
@@ -3708,8 +3734,8 @@ function chartSVG(q, opts) {
         (!!opts.swings && !summary && legDash !== "")) && B.idx > A.idx + 1;
       if (formingLeg) {
         var fp = [X(A.idx).toFixed(1) + "," + Y(A.price).toFixed(1)];
-        for (var fj2 = A.idx + 1; fj2 < B.idx; fj2++) fp.push(X(fj2).toFixed(1) + "," + Y(candles[fj2].c).toFixed(1));
-        fp.push(X(B.idx).toFixed(1) + "," + Y(B.price).toFixed(1));
+        for (var fj2 = A.idx + 1; fj2 < B.idx; fj2++) pushClosePt(fp, fj2);
+        pushEndPt(fp, B);
         out.push('<polyline points="' + fp.join(" ") + '" fill="none" stroke="' + col2 +
           '" stroke-width="2.6" opacity="' + legOp + '" stroke-linejoin="round" stroke-linecap="round"' + legDash + "/>");
       } else if (gapLeg) {
@@ -3717,8 +3743,8 @@ function chartSVG(q, opts) {
         var farPt = B.type === "high" ? Math.max(cA.o, cA.c) : Math.min(cA.o, cA.c);
         var pp = [X(A.idx).toFixed(1) + "," + Y(A.price).toFixed(1),
                   X(A.idx).toFixed(1) + "," + Y(farPt).toFixed(1)];
-        for (var j = A.idx + 1; j < B.idx; j++) pp.push(X(j).toFixed(1) + "," + Y(candles[j].c).toFixed(1));
-        pp.push(X(B.idx).toFixed(1) + "," + Y(B.price).toFixed(1));
+        for (var j = A.idx + 1; j < B.idx; j++) pushClosePt(pp, j);
+        pushEndPt(pp, B);
         out.push('<polyline points="' + pp.join(" ") + '" fill="none" stroke="' + col2 +
           '" stroke-width="2.6" opacity="' + legOp + '" stroke-linejoin="round" stroke-linecap="round"' + legDash + "/>");
       } else {
@@ -3766,7 +3792,7 @@ function chartSVG(q, opts) {
         var fFar = fB.type === "high" ? Math.max(fcA.o, fcA.c) : Math.min(fcA.o, fcA.c);
         var fpp = [X(fA.idx).toFixed(1) + "," + Y(fA.price).toFixed(1),
                    X(fA.idx).toFixed(1) + "," + Y(fFar).toFixed(1)];
-        for (var fj = fA.idx + 1; fj <= upto; fj++) fpp.push(X(fj).toFixed(1) + "," + Y(candles[fj].c).toFixed(1));
+        for (var fj = fA.idx + 1; fj <= upto; fj++) pushClosePt(fpp, fj);
         out.push('<polyline points="' + fpp.join(" ") + '" fill="none" stroke="' + fCol +
           '" stroke-width="2.6" opacity="0.9" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="5 4"/>');
       } else {
@@ -3807,7 +3833,13 @@ function chartSVG(q, opts) {
           var fpts = [X(fA.idx).toFixed(1) + "," + Y(fA.price).toFixed(1)];
           if (fExI === fA.idx) fpts.push(X(fA.idx).toFixed(1) + "," + Y(fExP).toFixed(1));
           for (var fx = fA.idx + 1; fx <= upto; fx++) {
-            fpts.push(X(fx).toFixed(1) + "," + Y(fx === fExI ? fExP : candles[fx].c).toFixed(1));
+            var fVal = fx === fExI ? fExP : candles[fx].c;
+            /* Gap notch, as on the other through-closes lines:
+               step to the gapped open first — unless the point
+               being drawn already IS that open (the running
+               extreme printed at the gap open). */
+            if (gappedAt(fx) && Math.abs(fVal - candles[fx].o) >= 0.01) fpts.push(ptStr(fx, candles[fx].o));
+            fpts.push(X(fx).toFixed(1) + "," + Y(fVal).toFixed(1));
           }
           if (fpts.length >= 3) {
             out.push('<polyline points="' + fpts.join(" ") + '" fill="none" stroke="' + fCol +
@@ -4360,6 +4392,11 @@ function showAbout() {
     "for practising how to read the state of a market from a chart.</p>" +
     "<h3>What's new in this build</h3>" +
     "<ul>" +
+    "<li><strong>Gap notch on candle-following segment lines:</strong> a segment line that follows " +
+    "the closes — a leg still forming, or a gap-born leg — now steps to a candle's open when that " +
+    "candle gapped away from the previous close, instead of running straight from the previous " +
+    "close to its close. The line now shows the jump price actually made, the way the candles " +
+    "themselves do. Completed legs keep their straight solid line, and Line view is unchanged.</li>" +
     "<li><strong>Trend establishment, per Mr. Black's ruling (October 28, 2026):</strong> a trend " +
     "is called as soon as the third segment crosses the first segment's extreme, completing the " +
     "zigzag — even while that third segment is still active, not fully formed. In the " +
@@ -4892,7 +4929,9 @@ function renderStepThrough() {
     "is drawn dashed with a lowercase label (hh, hl) and marked active — not final; it turns " +
     "solid, with a bold capital label, at the close that makes it final. The line of a segment " +
     "that is still forming is dashed too, and follows the closes candle by candle, passing " +
-    "through every candle of the leg; at that same close it turns solid — the straight line " +
+    "through every candle of the leg; where a candle in the leg gapped away from the previous " +
+    "close, the line steps to that candle's open first — the gapped open — before its close, " +
+    "so the jump shows in the line just as it does in the candles. At that same close it turns solid — the straight line " +
     "between the swing points, unless the segment was born in a gap: a gap-born segment's line " +
     "keeps the path through the closes it had while forming, exactly as the answered view " +
     "draws it. " +
