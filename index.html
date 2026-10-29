@@ -243,7 +243,7 @@ var PRISTINE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
    panel quotes it, and screenshots carry it — so a stale copy (an
    old saved file, the Netlify backup, an older shared link) can be
    told apart from the current build at a glance. */
-var QUIZ_VERSION = "v2026.10.29.1";
+var QUIZ_VERSION = "v2026.10.29.2";
 var QUIZ_BUILD_DATE = "October 29, 2026";
 
 /* ---------------- utilities ---------------- */
@@ -1019,6 +1019,8 @@ function analyze(chart, lineMode) {
   var unfinished = null;   // a three-segment pattern whose third leg is the chart's final segment
   var lastEst = null;      // the most recent establishment's call record {dir, callIdx, confirmIdx, crossIdx, nearPrice, farPrice, spot} — the final views' active-third-segment handling
   var deferredFar = null;  // a far relocation whose print candle overshoots into the next segment {sw, legDir} — see relocateFar
+  var gapSynD = null;      // a synthetic swing standing in swingsAll for the third leg of a gap-inclusive counter-pattern confirmed at a break (see tryGapPatternConfirm), until the leg's registered swing arrives and merges into it {sw, reg}
+  var gapRevFinal = null;  // a trend change confirmed by tryGapPatternConfirm {dir, callIdx} — the final explanation tells the confirmed-reversal story only when the trend it answers for is that very establishment (the sticky confirmedReversal flag is establish()'s own, for its spot confirmations)
 
   function mkLine(pt, dir, cls, to) {
     var w = dirWords(dir);
@@ -1061,6 +1063,11 @@ function analyze(chart, lineMode) {
       " died at that moment, at its last control point.");
     ctrlLog.push({ idx: i, kind: "break", trend: null, near: null, far: null, lines: events[events.length - 1].lines });
     near = null; far = null;
+    /* The break may be the governing close of a trend change whose
+       three-segment pattern — gap segments included — had already
+       completed inside this trend's range (see
+       tryGapPatternConfirm). */
+    tryGapPatternConfirm(ep, si, i);
   }
   /* A gap whose open jumps beyond the far control point breaks the
      trend at that candle, exactly as a close beyond it does — the head
@@ -1084,6 +1091,7 @@ function analyze(chart, lineMode) {
       "control point breaks the trend: the " + w.trend + " died at the gap.");
     ctrlLog.push({ idx: i, kind: "break", trend: null, near: null, far: null, lines: events[events.length - 1].lines });
     near = null; far = null;
+    tryGapPatternConfirm(ep, si, i);
   }
   /* The first candle, at or after fromIdx, that closes against a leg
      in direction dir: a close beyond the previous close against the
@@ -1326,6 +1334,215 @@ function analyze(chart, lineMode) {
         isCall: true, callIdx: callIdxE, crossIdx: crossIdxE,
         bPrice: bSwE ? bSwE.price : null, bIdx: bSwE ? bSwE.idx : -1
       });
+    }
+  }
+  /* Bug 9 — the change-of-trend confirmation (Michael's ruling,
+     Oct 29, 2026): a change of trend needs two conditions at one
+     governing moment — a candle CLOSE past the old trend's far
+     control (HL/LH; a gap crossing breaks too), and a completed
+     three-segment zigzag in the new direction counted from the old
+     trend's final extreme, its third segment crossing the first
+     segment's extreme (the third may still be active). THE ORDER
+     OF EVENTS DOES NOT MATTER: when the zigzag completed earlier,
+     inside the live trend's range, the break close is the moment
+     both conditions first hold at once, and the new trend is
+     called at that close. The ordinary spot-confirmation path can
+     only see patterns the swing derivation registered — and a gap
+     against the move at a segment's start, whose candle then
+     travelled with the move, registers no swing at all: the
+     derivation reads the travel on both sides of it as one leg
+     (chart ekcbgr: the gap up at candle 28, to 178.95, between the
+     down candle 27 and the down candles 28–31, so the descent from
+     the Higher High at 180.20 — down, gap up, down through the
+     first leg's low at candle 28's close — was three segments the
+     engine could not see; the break at candle 30 met no pattern
+     and the chart answered consolidation). So at every break this
+     evaluation rebuilds the counter-move's legs from the candles
+     alone — maximal body runs, with a gap against the running leg
+     ending it and printing a swing at the gap price, the settled
+     gap rule — and when the last four swings read as the
+     counter-pattern with a gap at one of its first two turns, it
+     integrates the pattern into the walk's ledger and establishes
+     the new trend on the spot, under the same guards as any
+     confirmed reversal. Anything it cannot place exactly, it
+     leaves alone: the break stands as it did before. */
+  function tryGapPatternConfirm(ep, si, brkIdx) {
+    if (lineMode || !ep || !ep.nearSnap) return;
+    var oldDir = ep.dir, newDir = oldDir === "up" ? "down" : "up";
+    /* A counter-pattern the ledger already shows belongs to the
+       ordinary establishment path at this segment's end. */
+    var wp = windowPattern();
+    if (wp && wp.dir === newDir) return;
+    var a = { idx: ep.nearSnap.idx, price: ep.nearSnap.price,
+              type: oldDir === "up" ? "high" : "low", gap: false };
+    var S = [a];
+    var legDir = newDir === "down" ? -1 : 1;
+    var legExt = null, legExtIdx = -1, legGap = false, legFrom = a.idx + 1;
+    function bExt(j, dir) {
+      return dir > 0 ? Math.max(candles[j].o, candles[j].c)
+                     : Math.min(candles[j].o, candles[j].c);
+    }
+    function closeLeg() {
+      S.push({ idx: legExtIdx, price: legExt, type: legDir > 0 ? "high" : "low", gap: legGap });
+    }
+    for (var j = a.idx + 1; j <= brkIdx; j++) {
+      var gap = candles[j].o - candles[j - 1].c;
+      var bd = Math.sign(candles[j].c - candles[j].o);
+      if (Math.abs(gap) > 0.01 && legExtIdx >= 0 && (gap > 0 ? 1 : -1) === -legDir) {
+        /* A gap against the running leg: the leg ends where it
+           stood, the gap is a segment all by itself and prints at
+           the gap candle's body extreme on the gap side, and the
+           candle's own body then belongs to whichever leg it
+           travels with — the gap leg when it runs with the gap,
+           the next leg when it closes back against it. */
+        closeLeg();
+        legDir = -legDir; legGap = true; legFrom = j;
+        legExt = bExt(j, legDir); legExtIdx = j;
+        if (bd !== 0 && bd === -legDir) {
+          closeLeg();
+          legDir = bd; legGap = false;
+          legExt = bExt(j, legDir); legExtIdx = j;
+        }
+        continue;
+      }
+      if (legExtIdx < 0) {
+        legExt = bExt(j, legDir); legExtIdx = j; legFrom = j;
+      } else if (bd !== 0 && bd === -legDir) {
+        closeLeg();
+        legDir = bd; legGap = false; legFrom = j;
+        legExt = bExt(j, legDir); legExtIdx = j;
+      } else {
+        var e2 = bExt(j, legDir);
+        if (legDir > 0 ? e2 > legExt : e2 < legExt) { legExt = e2; legExtIdx = j; }
+      }
+    }
+    if (legExtIdx < 0 || S.length < 3) return;
+    var dRun = { idx: legExtIdx, price: legExt, type: legDir > 0 ? "high" : "low", gap: legGap };
+    var a2 = S[S.length - 3], b2 = S[S.length - 2], c2 = S[S.length - 1];
+    if ((a2.type === "high" ? "down" : "up") !== newDir) return;
+    if (newDir === "down" ? !(dRun.price < b2.price && c2.price < a2.price)
+                          : !(dRun.price > b2.price && c2.price > a2.price)) return;
+    /* The class this fixes turns on a gap at one of the pattern's
+       first two swings; a pattern of plain body swings belongs to
+       the ordinary paths, merged swings and all. */
+    if (!b2.gap && !c2.gap) return;
+    /* The confirming close must hold on the living side of the new
+       far control — the stillborn guard establish() applies to its
+       own spot confirmations (chart az3v55). */
+    var brk = breaks[breaks.length - 1];
+    if (!brk || brk.idx !== brkIdx) return;
+    if (newDir === "down" ? !(brk.close <= c2.price && candles[brkIdx].c <= c2.price)
+                          : !(brk.close >= c2.price && candles[brkIdx].c >= c2.price)) return;
+    /* The third leg's registered swing: the first swing past the
+       anchor of the leg's own type that prints at or after the
+       middle swing's candle, sits past any registered counterpart
+       of the pattern's first two swings, and crosses the first
+       leg's extreme. It carries the leg's final extreme, which the
+       break close cannot know on its own; without it, stop. */
+    var aPos = anchorPosOf(ep.nearSnap, oldDir);
+    if (aPos < 0) return;
+    function counterpartPos(v) {
+      for (var q = aPos + 1; q < swingsFull.length; q++) {
+        if (swingsFull[q].idx === v.idx && swingsFull[q].type === v.type) return q;
+      }
+      return -1;
+    }
+    var bPos = counterpartPos(b2), cPos = counterpartPos(c2);
+    var regD = null;
+    for (var ri = aPos + 1; ri < swingsFull.length; ri++) {
+      var cand = swingsFull[ri];
+      if (cand.type !== dRun.type || cand.idx < c2.idx) continue;
+      if (ri <= bPos || ri <= cPos) continue;
+      if (newDir === "down" ? cand.price >= b2.price : cand.price <= b2.price) continue;
+      regD = cand; break;
+    }
+    if (!regD || spentNearIdx.indexOf(regD.idx) >= 0) return;
+    /* Integrate the pattern into the walk's ledger: the entries
+       after the pattern's first swing may only be the pattern's
+       own registered swings, in order, plus the third leg's —
+       anything else is a leg this read does not account for, and
+       the break stands alone. */
+    var pA = -1;
+    for (var pi = swingsAll.length - 1; pi >= 0; pi--) {
+      if (swingsAll[pi].idx === a2.idx && swingsAll[pi].type === a2.type) { pA = pi; break; }
+    }
+    if (pA < 0) return;
+    var pat = [b2, c2], need = 0, ti2, t2;
+    for (ti2 = pA + 1; ti2 < swingsAll.length; ti2++) {
+      t2 = swingsAll[ti2];
+      if (need < 2 && t2.idx === pat[need].idx && t2.type === pat[need].type) { need++; continue; }
+      if (t2 === regD) continue;
+      return;
+    }
+    function segOfIdx(idx) {
+      for (var sg = 0; sg < segRanges.length; sg++) {
+        if (idx >= segRanges[sg].from && idx <= segRanges[sg].to) return sg;
+      }
+      return si;
+    }
+    var mark = swingsAll.length;
+    for (var ni = need; ni < 2; ni++) {
+      swingsAll.push({ idx: pat[ni].idx, price: pat[ni].price, type: pat[ni].type,
+                       seg: segOfIdx(pat[ni].idx), gap: pat[ni].gap });
+    }
+    var regIn = swingsAll.indexOf(regD) >= 0;
+    var dSw = null;
+    if (!regIn) {
+      dSw = { idx: dRun.idx, price: dRun.price, type: dRun.type, seg: si, gap: false };
+      swingsAll.push(dSw);
+    }
+    /* The ledger's last four swings must now BE the pattern, at
+       ledger prices: the third leg's running extreme beyond the
+       first leg's ledger extreme, the middle swing inside the
+       first. If they are not, put the ledger back and stop. */
+    var L = swingsAll.length, lA = swingsAll[L - 4], lB = swingsAll[L - 3],
+        lC = swingsAll[L - 2], lD = swingsAll[L - 1];
+    var tailOk = lA.idx === a2.idx && lA.type === a2.type &&
+      lB.idx === b2.idx && lB.type === b2.type &&
+      lC.idx === c2.idx && lC.type === c2.type &&
+      lD.type === dRun.type && (regIn ? lD === regD : lD === dSw) &&
+      (newDir === "down" ? (dRun.price < lB.price && lC.price < lA.price)
+                         : (dRun.price > lB.price && lC.price > lA.price));
+    if (!tailOk) { swingsAll.length = mark; return; }
+    if (!regIn) gapSynD = { sw: dSw, reg: regD };
+    /* The old trend's deferred far relocation dies with it — it
+       must never land under the new trend's controls. */
+    deferredFar = null;
+    /* The new trend is called at this close, on the third leg's
+       running extreme — its final extreme is the registered
+       swing's, and the ordinary control updates take the near
+       control there when that swing is applied. */
+    var nearSw = { idx: brkIdx, price: dRun.price, type: dRun.type, seg: si, gap: false };
+    var evMark = gapEv.length;
+    establish(newDir, nearSw, lC, si, true);
+    /* Tag the gap record this establishment pushed, so the final
+       explanation's gap note can tell this episode's gap from the
+       surviving trend's own (see the note's selection there). */
+    if (gapEv.length > evMark) gapEv[gapEv.length - 1].mine = true;
+    gapRevFinal = { dir: newDir, callIdx: brkIdx };
+    /* The establishment was written from the running extreme at
+       the break close; its pending record is synced here to the
+       leg itself: the pending entry takes the registered swing's
+       final extreme (the synthetic ledger swing merges into the
+       same values when that swing arrives — see pushSwingAll),
+       and the confirmation close is the first close against the
+       third leg, which can land inside this very segment when the
+       leg ends here; establish() could only search past this
+       segment's end. */
+    var pe = pendingEsts[pendingEsts.length - 1];
+    var entry = ctrlLog[ctrlLog.length - 1];
+    if (pe && entry && entry.kind === "establish" && pe.callIdx === brkIdx) {
+      pe.extremeIdx = regD.idx; pe.nearPrice = regD.price;
+      pe.segTo = segRanges[regD.seg].to;
+      entry.segTo = pe.segTo;
+      var confT = dRun.gap ? gapLegConfirm({ idx: legFrom, type: dRun.type })
+                           : firstAgainstOrNever(legFrom + 1, newDir);
+      if (confT !== -1 && confT < brkIdx) confT = brkIdx;
+      if (confT !== -1 && (entry.confirmIdx === -1 || confT < entry.confirmIdx)) {
+        entry.confirmIdx = confT;
+        pe.confirmIdx = confT; pe.never = false;
+        if (lastEst) lastEst.confirmIdx = confT;
+      }
     }
   }
   /* The last four swings read as a possible trend pattern: returns
@@ -1694,13 +1911,31 @@ function analyze(chart, lineMode) {
     return txt;
   }
 
+  /* Every swing the walk takes into its ledger passes through
+     here. When a gap-inclusive confirmation (tryGapPatternConfirm)
+     has stood a synthetic swing in for a third leg whose
+     registered swing the walk has not reached yet, the registered
+     swing MERGES into the synthetic when it arrives — the same
+     same-type continuation merge the derivation itself applies —
+     instead of duplicating the leg in the ledger. */
+  function pushSwingAll(sw) {
+    if (gapSynD && sw === gapSynD.reg) {
+      gapSynD.sw.price = sw.price;
+      gapSynD.sw.idx = sw.idx;
+      gapSynD.sw.seg = sw.seg;
+      gapSynD = null;
+      return;
+    }
+    swingsAll.push(sw);
+  }
+
   for (var si = 0; si < totalSegs; si++) {
     var segSwings = (bySeg[si] || []).slice().sort(function (x, y) { return x.idx - y.idx; });
     var evMark = events.length;
     var farP0 = far ? far.price : null;
     var gapSw = null;
     segSwings.forEach(function (sw) {
-      if (sw.gap) { swingsAll.push(sw); gapSw = sw; }
+      if (sw.gap) { pushSwingAll(sw); gapSw = sw; }
     });
     var range = segRanges[si];
     var dirSign = 0;
@@ -1757,7 +1992,7 @@ function analyze(chart, lineMode) {
     var endSw = null;
     segSwings.forEach(function (sw) { if (!sw.gap) endSw = sw; });
     if (endSw) {
-      swingsAll.push(endSw);
+      pushSwingAll(endSw);
       if (trend) { updateControls(endSw); checkInner(); }
     }
     /* A completed three-segment pattern with no live trend, as of
@@ -1970,6 +2205,25 @@ function analyze(chart, lineMode) {
                  label: L.label + " (active — not final)" };
       });
     }
+  }
+
+  /* A trend change confirmed at its break close (Bug 9) whose
+     third leg never became fully formed stands in the same
+     position as any active-third-segment call — its pair drawn
+     active, not final — even though the leg's later print moved
+     the near control past the running extreme the call was written
+     from, which is what activeAtEnd's price match keys on. The
+     pendingNever pass above has already marked the near point;
+     this marks the pair. */
+  if (!activeAtEnd && gapRevFinal && trend && trend === gapRevFinal.dir &&
+      lastEst && lastEst.callIdx === gapRevFinal.callIdx && lastEst.confirmIdx === -1 &&
+      near && far && far.price === lastEst.farPrice) {
+    finalLines = finalLines.map(function (L) {
+      if (L.cls !== "live") return L;
+      return { price: L.price, from: L.from, to: L.to, cls: "active", circle: L.circle,
+               abbr: L.abbr ? L.abbr.toLowerCase() : L.abbr,
+               label: L.label + " (active — not final)" };
+    });
   }
 
   /* Segment Summary steps: the walk's event steps interleaved with one
@@ -2905,16 +3159,24 @@ function analyze(chart, lineMode) {
       fcap = breakCapByIdx[fi];
     } else if (confEst) {
       ew = dirWords(confEst.trend);
+      /* The points that become final are the ones in force at this
+         close: a trend called at its break close (Bug 9) was
+         written from the third leg's running extreme, and the
+         leg's own final print lands as a relocation entry stamped
+         at this same close — its near (and far, when it moved) is
+         the control in force, not the call's running value. */
+      var nearNow = (chExt && chExt.trend === confEst.trend) ? chExt.near : confEst.near;
+      var farNow = (chExt && chExt.trend === confEst.trend && chExt.farChanged) ? chExt.far : confEst.far;
       fcap = "Candle " + (fi + 1) + " is the first candle to close against the third leg " +
         "(candles " + (confEst.segFrom + 1) + "–" + (confEst.segTo + 1) + ") — at that close the " +
         "third segment becomes fully formed. The " + ew.trend + " was called at candle " +
         (confEst.callIdx + 1) + " — the close where its third segment crossed the first " +
         "segment's extreme, completing the zigzag — on the still-active segment; now its " +
         "control points become final: the near control is the " + ew.near + " (" +
-        abbrOf(confEst.trend, "near") + ") at " + fmt(confEst.near.price) + " (candle " +
-        (confEst.near.idx + 1) + "), and the far control — the line the trend must hold — is the " +
-        ew.far + " (" + abbrOf(confEst.trend, "far") + ") at " + fmt(confEst.far.price) +
-        " (candle " + (confEst.far.idx + 1) + ")." +
+        abbrOf(confEst.trend, "near") + ") at " + fmt(nearNow.price) + " (candle " +
+        (nearNow.idx + 1) + "), and the far control — the line the trend must hold — is the " +
+        ew.far + " (" + abbrOf(confEst.trend, "far") + ") at " + fmt(farNow.price) +
+        " (candle " + (farNow.idx + 1) + ")." +
         (confEst.farGap ? " " + gapCtlText(confEst.trend, { idx: confEst.far.idx, price: confEst.far.price, type: confEst.farType }) : "");
     } else if (chEst) {
       ew = dirWords(chEst.trend);
@@ -3225,7 +3487,10 @@ function analyze(chart, lineMode) {
         w.pattern + ", establishing the " + w.trend + ". No candle ever closed " + w.beyond +
         " the controlling " + w.far + " (" + fmt(far.price) + "), so the " + w.trend +
         " is still in force at the end of the chart.");
-    } else if (confirmedReversal) {
+    } else if (confirmedReversal ||
+               (gapRevFinal && lastEst && lastEst.dir === answer &&
+                lastEst.callIdx === gapRevFinal.callIdx &&
+                breaks[breaks.length - 1].idx === gapRevFinal.callIdx)) {
       var b0 = breaks[breaks.length - 1], ow2 = dirWords(b0.dir);
       parts.push((b0.gap
         ? "Price gapped " + ow2.beyond + " the old " + ow2.far + " (" + fmt(b0.level) +
@@ -3296,8 +3561,31 @@ function analyze(chart, lineMode) {
   }
   if (gapEv.length && (answer === "up" || answer === "down")) {
     var gw = dirWords(answer);
+    /* The note names the first gap that set a far control —
+       except when the trend it answers for was itself confirmed at
+       its break close (Bug 9): then it names the gap that set THIS
+       trend's far control, which an earlier episode's gap can
+       precede in gapEv. Entries a Bug 9 confirmation pushed for a
+       trend that has since died are skipped on the other side, so
+       the note reads as it did before that episode existed. */
+    var gNotePrice = null;
+    var gapFinal = gapRevFinal && lastEst && lastEst.callIdx === gapRevFinal.callIdx;
+    if (gapFinal && far) {
+      for (var gi2 = gapEv.length - 1; gi2 >= 0; gi2--) {
+        if (gapEv[gi2].idx === far.idx && gapEv[gi2].price === far.price) {
+          gNotePrice = gapEv[gi2].price;
+          break;
+        }
+      }
+    }
+    if (gNotePrice === null) {
+      for (var gi3 = 0; gi3 < gapEv.length; gi3++) {
+        if (!gapEv[gi3].mine) { gNotePrice = gapEv[gi3].price; break; }
+      }
+      if (gNotePrice === null) gNotePrice = gapEv[0].price;
+    }
     parts.push("Note the gap: a gap counts as a segment all by itself — here it was the retracement, and it moved the " + gw.far +
-      " to the gap price, " + fmt(gapEv[0].price) + " — the line the " + gw.trend +
+      " to the gap price, " + fmt(gNotePrice) + " — the line the " + gw.trend +
       " then had to hold.");
   }
   if (pokeEv.length && (answer === "up" || answer === "down")) {
@@ -4392,6 +4680,10 @@ function showAbout() {
     "for practising how to read the state of a market from a chart.</p>" +
     "<h3>What's new in this build</h3>" +
     "<ul>" +
+    "<li><strong>Trend changes:</strong> when a three-segment pattern has already formed against " +
+    "a live trend and a candle then closes past the old trend's controlling HL/LH, the new trend " +
+    "is now called at that close — the order of the pattern and the break no longer matters. " +
+    "Fixes charts like ekcbgr, where a gap formed the pattern's middle segment.</li>" +
     "<li><strong>Gap notch on candle-following segment lines:</strong> a segment line that follows " +
     "the closes — a leg still forming, or a gap-born leg — now steps to a candle's open when that " +
     "candle gapped away from the previous close, instead of running straight from the previous " +
