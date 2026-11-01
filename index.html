@@ -256,7 +256,7 @@ var PRISTINE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
    panel quotes it, and screenshots carry it — so a stale copy (an
    old saved file, the Netlify backup, an older shared link) can be
    told apart from the current build at a glance. */
-var QUIZ_VERSION = "v2026.10.31.5";
+var QUIZ_VERSION = "v2026.10.31.6";
 var QUIZ_BUILD_DATE = "October 31, 2026";
 
 /* ---------------- utilities ---------------- */
@@ -1088,6 +1088,7 @@ function analyze(chart, lineMode) {
   var lastBreakSeg = -1, pokeDone = false;
   var unfinished = null;   // a three-segment pattern whose third leg is the chart's final segment
   var lastEst = null;      // the most recent establishment's call record {dir, callIdx, confirmIdx, crossIdx, nearPrice, farPrice, spot} — the final views' active-third-segment handling
+  var estRecords = [];     // every establishment {callIdx, anchorPos, dir} — the segment-display episodes: the drawn segment lines run from an establishment's anchor swing (its pattern's first swing, a position in swingsAll) until the next establishment retires them at its call close
   var deferredFar = null;  // a far relocation whose print candle overshoots into the next segment {sw, legDir} — see relocateFar
   var gapSynD = null;      // a synthetic swing standing in swingsAll for the third leg of a gap-inclusive counter-pattern confirmed at a break (see tryGapPatternConfirm), until the leg's registered swing arrives and merges into it {sw, reg}
   var gapRevFinal = null;  // a trend change confirmed by tryGapPatternConfirm {dir, callIdx} — the final explanation tells the confirmed-reversal story only when the trend it answers for is that very establishment (the sticky confirmedReversal flag is establish()'s own, for its spot confirmations)
@@ -1394,9 +1395,42 @@ function analyze(chart, lineMode) {
       if (brk && brk.idx > callIdxE) callIdxE = brk.idx;
       if (confirmIdxE !== -1 && callIdxE > confirmIdxE) callIdxE = confirmIdxE;
     }
+    /* The display episode this establishment opens: the drawn
+       segment lines are counted from the dead trend's final
+       extreme when this establishment follows a break — the same
+       anchor the post-break segment count itself uses (chart
+       9w4xh1: segment 1 of the reversal runs from the old
+       uptrend's Higher High, not from any later swing) — and never
+       from later than the pattern's own first swing (swingsAll's
+       fourth from last here, the a of [..., a, b, c, d]), so the
+       drawing always contains the whole pattern that established
+       the trend. A first establishment has no dead trend: its
+       anchor is the pattern's first swing. The dead extreme is
+       located by a direct scan of swingsAll, not anchorPosOf:
+       positions in swingsFull and swingsAll diverge once a
+       gap-confirmation has stood a synthetic swing in the ledger. */
+    var patPosE = Math.max(0, swingsAll.length - 4);
+    var anchorPosE = patPosE;
+    var anchorKindE = "pattern";
+    var deadEpE = null, deI;
+    for (deI = episodes.length - 1; deI >= 0; deI--) {
+      if (episodes[deI].brokenAt != null) { deadEpE = episodes[deI]; break; }
+    }
+    if (deadEpE && deadEpE.nearSnap) {
+      var nTypeE = deadEpE.dir === "up" ? "high" : "low", dsI, dsE;
+      for (dsI = swingsAll.length - 1; dsI >= 0; dsI--) {
+        dsE = swingsAll[dsI];
+        if (dsE.idx === deadEpE.nearSnap.idx && dsE.price === deadEpE.nearSnap.price &&
+            dsE.type === nTypeE) {
+          if (dsI <= anchorPosE) { anchorPosE = dsI; anchorKindE = "prevExtreme"; }
+          break;
+        }
+      }
+    }
     lastEst = { dir: dir, callIdx: callIdxE, confirmIdx: confirmIdxE, crossIdx: crossIdxE,
                 nearPrice: nearSw.price, farPrice: farSw.price, spot: !!spotConfirm,
-                bPrice: bSwE ? bSwE.price : null, patGap: patGapE };
+                bPrice: bSwE ? bSwE.price : null, patGap: patGapE, anchorPos: anchorPosE };
+    estRecords.push({ callIdx: callIdxE, anchorPos: anchorPosE, patPos: patPosE, dir: dir, anchorKind: anchorKindE });
     if (spotConfirm) {
       confirmedReversal = true;
       pushEvent("confirmed", nearSw.idx,
@@ -3558,65 +3592,67 @@ function analyze(chart, lineMode) {
         }
       }
     }
-    /* The three-segment drawing window, narrated at the close where
-       it slides (Michael, Oct 31, 2026): the segment lines show only
-       the three most recent CONFIRMED segments — the three that
-       establish a trend — so when this close confirms a new segment
-       and a fourth leg would be on screen, the oldest drawn leg
-       leaves the drawing at this same close. That leg has not
-       stopped counting; only the window moved, and it moves only
-       now, at the confirmation close — never at the new segment's
-       own extreme candle, which cannot be known to be an extreme
-       until a candle closes against its leg (Bug 11). When the
-       first of the three segments now shown is the gap segment, the
-       note says so by name: a gap counts as a segment all by
-       itself, so it holds a place in the three, and that is why
-       the segment to its left is the one that leaves. */
+    /* The segment lines change over at an establishment, narrated
+       at the call close (Michael, Oct 31, 2026): every segment of
+       the story in force is drawn — the trend's own legs and the
+       segments that form between its two control points alike —
+       each dashed while it is still active and solid once a candle
+       has closed against it, and a segment line leaves the drawing
+       only when a new trend is established. At that close the
+       drawing takes up the segments that established the new
+       trend, counted from its pattern's first swing (for a
+       reversal, the dead trend's final extreme), and the segments
+       before that swing are no longer drawn. When one of the
+       establishing segments is a gap segment, the note names it:
+       a gap counts as a segment all by itself — and when the gap
+       segment is the first of the three, the segment to its left
+       is the last of the ones that leave, and the note says so. */
     (function () {
       if (lineMode) return;
-      function confOfW(s) {
-        if (!s || s.seg == null || s.seg < 0 || !segRanges[s.seg]) return null;
-        return s.gap ? gapLegConfirm(s)
-                     : firstAgainstOrNever(segRanges[s.seg].to + 1, s.type === "high" ? "up" : "down");
-      }
-      var confW = [swingsAll[0]], wi, ws, wc;
-      for (wi = 1; wi < swingsAll.length; wi++) {
-        ws = swingsAll[wi]; wc = confOfW(ws);
-        if (wc === null ? ws.idx <= fi : (wc === -1 ? ws.idx <= fi : wc <= fi)) confW.push(ws);
-      }
-      if (confW.length < 5) return;
-      var newW = confW[confW.length - 1], nc = confOfW(newW);
-      if (!(nc === fi || (nc === -1 && newW.idx === fi))) return;
-      var shownW = confW.slice(-4);
-      var dropA = confW[confW.length - 5], dropB = confW[confW.length - 4];
-      var dropSpan = (legStartIdx(dropA, dropB.idx) + 1) + "–" + (dropB.idx + 1);
-      if (gapPriced(shownW[1])) {
-        var gWs = shownW[1].gap ? shownW[1] : null, gWi, eW;
-        if (!gWs) {
-          for (gWi = 0; gWi < chart.swingEvents.length; gWi++) {
-            eW = chart.swingEvents[gWi];
-            if (eW.gap && eW.idx === shownW[1].idx && eW.price === shownW[1].price &&
-                eW.type === shownW[1].type) { gWs = eW; break; }
+      for (var ei2 = 0; ei2 < estRecords.length; ei2++) {
+        var rec = estRecords[ei2];
+        if (rec.callIdx !== fi) continue;
+        var prevAnchor = ei2 > 0 ? estRecords[ei2 - 1].anchorPos : 0;
+        if (rec.anchorPos <= prevAnchor) return;
+        var wE = dirWords(rec.dir);
+        var aSw = swingsAll[rec.anchorPos];
+        var dropB = aSw, dropA = swingsAll[rec.anchorPos - 1];
+        var dropSpan = (legStartIdx(dropA, dropB.idx) + 1) + "–" + (dropB.idx + 1);
+        var anchorTxt = rec.anchorKind === "prevExtreme"
+          ? "the previous trend's final extreme — " + fmt(aSw.price) + " at candle " + (aSw.idx + 1)
+          : fmt(aSw.price) + " at candle " + (aSw.idx + 1);
+        var gapTxtE = "";
+        var gLimE = (rec.patPos != null ? rec.patPos : rec.anchorPos) - rec.anchorPos + 3;
+        for (var gi2 = 1; gi2 <= gLimE; gi2++) {
+          var gSwE = swingsAll[rec.anchorPos + gi2];
+          if (!gSwE || !gapPriced(gSwE)) continue;
+          var gEvE = gSwE.gap ? gSwE : null, gI2, eE2;
+          if (!gEvE) {
+            for (gI2 = 0; gI2 < chart.swingEvents.length; gI2++) {
+              eE2 = chart.swingEvents[gI2];
+              if (eE2.gap && eE2.idx === gSwE.idx && eE2.price === gSwE.price &&
+                  eE2.type === gSwE.type) { gEvE = eE2; break; }
+            }
           }
+          var gCandleE = gEvE && segRanges[gEvE.seg] ? segRanges[gEvE.seg].from : gSwE.idx;
+          gapTxtE = " One of the segments counted from there is a gap segment: candle " +
+            (gCandleE + 1) + " gapped " + (gSwE.type === "low" ? "down" : "up") + " to " +
+            fmt(gSwE.price) + " — a gap counts as a segment all by itself, and here it " +
+            "is segment " + gi2 + " counted from that swing." +
+            (gi2 === 1 ? " That is why the segment to the left of the gap (candles " +
+              dropSpan + ", " + fmt(dropA.price) + " to " + fmt(dropB.price) +
+              ") is no longer drawn." : "");
+          break;
         }
-        var gCandleW = gWs && segRanges[gWs.seg] ? segRanges[gWs.seg].from : shownW[1].idx;
-        fcap += " About the segment lines: only the three most recent segments are drawn — " +
-          "the three that establish a trend. The first of the three now shown is the gap " +
-          "segment: candle " + (gCandleW + 1) + " gapped " +
-          (shownW[1].type === "low" ? "down" : "up") + " to " + fmt(shownW[1].price) +
-          ", and a gap counts as a segment all by itself, so it holds the first place in " +
-          "the three. That is why the segment to the left of the gap (candles " + dropSpan +
-          ", " + fmt(dropA.price) + " to " + fmt(dropB.price) + ") is no longer drawn: the " +
-          "window slid at this close — the first close against the newest segment, the " +
-          "close that confirms it. The segment to the left of the gap still counts in the " +
-          "analysis; it has only left the three-segment window.";
-      } else {
-        fcap += " About the segment lines: only the three most recent segments are drawn — " +
-          "the three that establish a trend — so at this close, the first close against " +
-          "the newest segment, the oldest drawn segment (candles " + dropSpan + ", " +
-          fmt(dropA.price) + " to " + fmt(dropB.price) + ") leaves the drawing. It still " +
-          "counts in the analysis; only the three-segment window moved, and it moves at " +
-          "the confirmation close, not at the new segment's own candle.";
+        fcap += " About the segment lines: a new " + wE.trend + " is established at this " +
+          "close, so the drawing changes over to the new trend's own segments, counted " +
+          "from " + anchorTxt + ". The segments before that swing — the last of them " +
+          "candles " + dropSpan + ", " + fmt(dropA.price) + " to " + fmt(dropB.price) +
+          " — are no longer drawn: a segment line leaves the drawing only when a new trend " +
+          "takes over, never just because a newer segment printed. From here every segment " +
+          "of the new trend stays drawn, dashed while it is still active and solid once a " +
+          "candle has closed against it." + gapTxtE;
+        return;
       }
     })();
     /* The trend state in force after this candle's close: the trend
@@ -3817,7 +3853,9 @@ function analyze(chart, lineMode) {
     breaks: breaks,
     refDir: refDir,
     unfinished: unfinished ? unfinished.dir : null,
-    lastBreakIdx: breaks.length ? breaks[breaks.length - 1].idx : -1
+    lastBreakIdx: breaks.length ? breaks[breaks.length - 1].idx : -1,
+    establishments: estRecords,
+    episodeStart: estRecords.length ? estRecords[estRecords.length - 1].anchorPos : 0
   };
 }
 
@@ -4076,13 +4114,24 @@ function chartSVG(q, opts) {
     out.push('<line x1="' + X(L.from) + '" y1="' + y + '" x2="' + (X(L.to) + cw * 0.6) + '" y2="' + y +
       '" stroke="' + col + '" stroke-width="' + wid + '"' + dash + ' opacity="0.95"/>');
   });
-  /* swing overlay: last three segments (post-answer views only).
-     opts.swings overrides the swing list — the candle replay passes
-     only the swings CONFIRMED so far (Bug 11: a swing joins at its
-     confirmation close, not its own candle), so the straight
-     segment lines appear one confirmation at a time instead of all
-     at once, and the three-segment window slides only then. */
+  /* swing overlay: the current episode's segments (post-answer
+     views only). opts.swings overrides the swing list — the candle
+     replay passes the current episode's swings CONFIRMED so far
+     (Bug 11: a swing joins at its confirmation close, not its own
+     candle), already cut to the episode in force at that frame.
+     Without opts.swings, the answered view takes the final
+     episode's swings from the analysis (result.episodeStart): the
+     segments counted from the swing the surviving trend was
+     established from. Either way every segment of the episode is
+     drawn — the segments between the control points included —
+     dashed while its leg is still active, solid once a candle has
+     closed against it — and an earlier episode's segments are not
+     drawn at all: they left the drawing at the close that
+     established the new trend. */
   var sw = opts.swings || (q.result ? q.result.swings : []);
+  if (!opts.swings && !opts.summary && q.result && q.result.episodeStart) {
+    sw = sw.slice(q.result.episodeStart);
+  }
   /* Segment Summary mode (opts.summary): draw the COMPLETE final
      segment structure — every leg, not just the last three — with
      the legs already reached at full strength and the legs not yet
@@ -4091,7 +4140,7 @@ function chartSVG(q, opts) {
      exactly as the answered view draws them. */
   var summary = !!opts.summary;
   if (!bare && !lineMode && sw.length >= 2) {
-    var pts = summary ? sw.slice() : sw.slice(-4);
+    var pts = (summary || opts.allSwings || !opts.swings) ? sw.slice() : sw.slice(-4);
     for (i = 0; i + 1 < pts.length; i++) {
       var A = pts[i], B = pts[i + 1];
       var upLeg = B.price > A.price;
@@ -4361,7 +4410,7 @@ function chartSVG(q, opts) {
       out.push('<polyline points="' + ptsAll.join(" ") + '" fill="none" stroke="' + NEUTRAL +
         '" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"/>');
     } else {
-      var spans = summary ? sw.slice() : sw.slice(-4);
+      var spans = (summary || opts.allSwings || !opts.swings) ? sw.slice() : sw.slice(-4);
       /* The leg still forming (replay only, as on candles): the
          closes past the last printed swing belong to the next
          segment, still under way — they take the leg's colour,
@@ -4816,14 +4865,17 @@ function showLegend() {
     "would abandon the very candles the segment travelled through. A gap segment follows exactly the same rule: when the gap " +
     "candle itself closes against the gap, the segment is final from that close; when the " +
     "gap candle runs on in the gap's direction, the line stays dashed until a later candle " +
-    "closes against it. Only the three most recent segments are drawn at once — the three " +
-    "that establish a trend — and in the replay a swing joins those lines only at its " +
-    "confirmation close, never at its own candle, which cannot yet be known to be its " +
-    "leg's end. When a newly confirmed segment takes its place in the three, the oldest " +
-    "drawn segment leaves the window at that same close; it still counts in the analysis. " +
-    "Because a gap counts as a segment all by itself, a gap segment can hold the first " +
-    "place in the three — and when it does, the segment to the left of the gap is the one " +
-    "that leaves the drawing.</p>" +
+    "closes against it. Every segment of the story in force is drawn — counted from the " +
+    "swing the current trend was established from — including the segments that form " +
+    "between the two control points and change neither. Each one is dashed while it is " +
+    "still active and turns solid at the confirmation close that completes it, and in " +
+    "the replay a swing joins the lines only at that close, never at its own candle, " +
+    "which cannot yet be known to be its leg's end. A segment line leaves the drawing " +
+    "only when a new trend is established: at that close the previous story's segments " +
+    "vanish, and the segments that established the new trend — counted from the dead " +
+    "trend's final extreme, the third of them allowed to still be active and dashed — " +
+    "are drawn in their place. A gap counts as a segment all by itself, so a gap " +
+    "segment can be one of the establishing segments.</p>" +
     "<h3>Why the wait?</h3>" +
     "<p>A segment exists only after the first candle that closes in the opposite direction — " +
     "that is how Mr. Black teaches it. Until that candle closes, the last candle of the leg can " +
@@ -5430,8 +5482,8 @@ function renderStepThrough() {
      closes against its leg — never at its own candle. At its own
      candle nothing yet proves the leg has ended (the next candle
      could extend it), so admitting the swing there read one candle
-     into the future, slid the three-segment window a candle early,
-     and silently dropped the oldest drawn segment (chart 9w4xh1:
+     into the future and silently retired the oldest drawn segment
+     a candle early (chart 9w4xh1:
      the line left of the gap vanished at candle 26, a candle before
      candle 27's close against the leg confirmed anything). Until
      the confirmation close the leg stays what it truthfully is —
@@ -5441,7 +5493,18 @@ function renderStepThrough() {
      final — exactly as the answered view shows it. A gap segment
      whose own candle closes back against the gap is born final:
      its confirmation IS its own candle, so it joins there. */
-  var swingsSoFar = q.result.swings.filter(function (s) {
+  /* The drawn segments are the current EPISODE's: every confirmed
+     swing from the anchor of the most recent establishment at or
+     before this frame (the chart's first swing until the first
+     establishment). An earlier episode's segments leave the drawing
+     at the call close that establishes the new trend — and only
+     then: a segment that merely confirms retires nothing. */
+  var epStart = 0;
+  (q.result.establishments || []).forEach(function (e) {
+    if (e.callIdx <= st.step) epStart = e.anchorPos;
+  });
+  var swingsSoFar = q.result.swings.filter(function (s, sPos) {
+    if (sPos < epStart) return false;
     var c = legConfirmOf(q.result, s);
     if (c === null) return s.idx <= st.step;
     if (c === -1) return s.idx <= st.step;
@@ -5474,7 +5537,7 @@ function renderStepThrough() {
     '<span class="tb-v ' + fr.state + '">' + stateName(fr.state) + (fr.activeThird ? " — third segment still active (not fully formed)" : "") + "</span>" +
     (hasActive ? '<span class="tb-k">Forming controls on this frame: active — not final</span>' : "") +
     "</div>" +
-    chartSVG(q, { upto: fr.idx, lines: fr.lines, highlight: fr.idx, abbr: true, swings: swingsSoFar,
+    chartSVG(q, { upto: fr.idx, lines: fr.lines, highlight: fr.idx, abbr: true, swings: swingsSoFar, allSwings: true,
                   activeLegs: activeLegsAt(q.result, swingsSoFar, st.step) }) +
     '<p class="bd-cap">' + esc(fr.caption) + "</p>" +
     '<p class="small">Each frame is the chart as it stood at that candle\'s close: the control ' +
@@ -5489,14 +5552,17 @@ function renderStepThrough() {
     "between the swing points, unless the segment was born in a gap: a gap-born segment's line " +
     "keeps the path through the closes it had while forming, exactly as the answered view " +
     "draws it. " +
-    "The segment lines show only the three most recent segments — the three that establish " +
-    "a trend. A swing joins those lines only at its confirmation close, never at its own " +
-    "candle: until a candle closes against its leg, the leg's end cannot be known, so the " +
-    "leg stays dashed and follows the closes. When a newly confirmed segment takes its " +
-    "place in the three, the oldest drawn segment leaves the window at that same close — " +
-    "it still counts in the analysis; only the drawing moved on. A gap counts as a segment " +
-    "all by itself, so a gap segment can hold the first place in the three — and when it " +
-    "does, the segment to the left of the gap is the one that leaves the drawing. " +
+    "The segment lines show the segments of the story in force: every segment counted " +
+    "from the swing the current trend was established from stays drawn — the segments " +
+    "that form between the two control points included — each one dashed while it is " +
+    "still active and solid from the close that completes it. A swing joins those lines " +
+    "only at its confirmation close, never at its own candle: until a candle closes " +
+    "against its leg, the leg's end cannot be known, so the leg stays dashed and follows " +
+    "the closes. A segment line leaves the drawing only when a new trend is established: " +
+    "at that close the earlier segments vanish and the drawing takes up the segments " +
+    "that established the new trend. A gap counts as a segment all by itself, so a gap " +
+    "segment can be one of the establishing segments — and when it is the first of them, " +
+    "the segment to the left of the gap is among those that leave the drawing at that close. " +
     "Tap the ⓘ button " +
     "in the controls above for the full guide to the lines and labels.</p></div>";
   bindRulesButtons();
