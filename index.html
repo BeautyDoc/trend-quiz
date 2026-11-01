@@ -256,7 +256,7 @@ var PRISTINE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
    panel quotes it, and screenshots carry it — so a stale copy (an
    old saved file, the Netlify backup, an older shared link) can be
    told apart from the current build at a glance. */
-var QUIZ_VERSION = "v2026.10.31.2";
+var QUIZ_VERSION = "v2026.10.31.3";
 var QUIZ_BUILD_DATE = "October 31, 2026";
 
 /* ---------------- utilities ---------------- */
@@ -4759,8 +4759,8 @@ function showAbout() {
     "streak game on Candles (Realistic) charts. How many can you answer correctly in a row with " +
     "no mistakes, when each chart gives you only one minute to decide? A wrong answer, a minute " +
     "that runs out, or giving up ends the run. Ranks are earned as the streak climbs: Master " +
-    "at 10, Ninja at 15, Turbo Charged at 20, Grand Imperial Poobah at 25, Phantom at 30 — " +
-    "and Mr. Black at 40 in a row. Master keeps its own best " +
+    "at 10, Ninja at 15, Turbo Charged at 20, Grand Imperial Poobah at 25, Trend Whisperer " +
+    "at 30, Phantom at 40 — and Mr. Black at 50 in a row. Master keeps its own best " +
     "streak and its own leaderboard on this device.</li>" +
     "<li><strong>More realistic candles:</strong> gaps are smaller and rarer, the way real charts " +
     "behave — a gap no longer routinely jumps a tenth of the chart, and break gaps (which jump " +
@@ -4911,7 +4911,7 @@ function renderIntro() {
     '<button type="button" class="segbtn' + (STYLE_PICK === "expert" ? " on" : "") + '" id="styleExpert">Expert</button>' +
     '<button type="button" class="segbtn' + (STYLE_PICK === "master" ? " on" : "") + '" id="styleMaster">Master</button>' +
     "</span></div>" +
-    '<p class="small">Line: a single line through the closes — no candles, no wicks — the way the Trade Phantoms mini-lesson teaches trend. In Line view the chart is judged on closes only and gaps are not considered, so the Include gaps option above does not apply while Line is selected. Candles (Easy): uniform candles — all green in an up-move, all red in a down-move. Candles (Realistic): body sizes vary and trends include counter-trend candles (some red in an up-move, some green in a down-move), like real price action — and under rule 1 each of those counter-trend candles, however small, is a segment of its own. Expert: the speed game, played on Candles (Realistic) charts — a clock starts when you tap Start, and the challenge is 10 correct answers in a row; one wrong answer ends the run. Master: the endless game, also on Candles (Realistic) charts — how many in a row can you get with no mistakes, when every chart gives you only one minute to decide? Ranks along the way start at Master (10 in a row), then Ninja, Turbo Charged, Grand Imperial Poobah and Phantom — and, at 40 in a row, Mr. Black.</p>' +
+    '<p class="small">Line: a single line through the closes — no candles, no wicks — the way the Trade Phantoms mini-lesson teaches trend. In Line view the chart is judged on closes only and gaps are not considered, so the Include gaps option above does not apply while Line is selected. Candles (Easy): uniform candles — all green in an up-move, all red in a down-move. Candles (Realistic): body sizes vary and trends include counter-trend candles (some red in an up-move, some green in a down-move), like real price action — and under rule 1 each of those counter-trend candles, however small, is a segment of its own. Expert: the speed game, played on Candles (Realistic) charts — a clock starts when you tap Start, and the challenge is 10 correct answers in a row; one wrong answer ends the run. Master: the endless game, also on Candles (Realistic) charts — how many in a row can you get with no mistakes, when every chart gives you only one minute to decide? Ranks along the way start at Master (10 in a row), then Ninja, Turbo Charged, Grand Imperial Poobah and Trend Whisperer, then Phantom — and, at 50 in a row, Mr. Black.</p>' +
     '<label class="gapopt"><input type="checkbox" id="gapMarkChk"' + (SHOW_GAP_MARKERS ? " checked" : "") + '> Show gap markers</label>' +
     '<p class="small">Gap markers draw each gap the way your instructor does — as a plain candle body with no wicks, sitting between the two candles — so the gap stands out as its own mark. Turn it off and a gap shows only as open space between the candles.</p>' +
     '<div class="row"><button class="btn primary" id="start">' + (STYLE_PICK === "expert" ? "Start an Expert run" : STYLE_PICK === "master" ? "Start a Master run" : "Start a set of 10") + "</button>" +
@@ -5672,8 +5672,9 @@ function saveExpertInitials() {
    out of minute and the run ends, exactly as a miss does; a Give up
    button ends it voluntarily. Ranks are earned as the streak climbs
    the ladder Michael approved (Oct 31, 2026) — Master at 10, Ninja
-   at 15, Turbo Charged at 20, Grand Imperial Poobah at 25, Phantom
-   at 30 and, at 40 in a row, Mr. Black — and are announced the
+   at 15, Turbo Charged at 20, Grand Imperial Poobah at 25, Trend
+   Whisperer at 30, Phantom at 40 and, at 50 in a row, Mr. Black —
+   and are announced the
    moment they are reached. Best streak and the local leaderboard (the top 4 streaks
    on THIS device, ties broken by total time) live in localStorage
    under the same guarded pattern as Expert's board. */
@@ -5683,8 +5684,9 @@ var MASTER_RANKS = [
   { n: 15, name: "Ninja" },
   { n: 20, name: "Turbo Charged" },
   { n: 25, name: "Grand Imperial Poobah" },
-  { n: 30, name: "Phantom" },
-  { n: 40, name: "Mr. Black" }
+  { n: 30, name: "Trend Whisperer" },
+  { n: 40, name: "Phantom" },
+  { n: 50, name: "Mr. Black" }
 ];
 function masterRankFor(streak) {
   var r = null;
