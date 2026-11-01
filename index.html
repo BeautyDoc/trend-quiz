@@ -256,7 +256,7 @@ var PRISTINE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
    panel quotes it, and screenshots carry it — so a stale copy (an
    old saved file, the Netlify backup, an older shared link) can be
    told apart from the current build at a glance. */
-var QUIZ_VERSION = "v2026.10.31.3";
+var QUIZ_VERSION = "v2026.10.31.4";
 var QUIZ_BUILD_DATE = "October 31, 2026";
 
 /* ---------------- utilities ---------------- */
@@ -1294,6 +1294,59 @@ function analyze(chart, lineMode) {
        can appear. swingsAll here is [..., a, b, c, d] with d the
        near swing and c the far swing, so b is three back. */
     var bSwE = swingsAll.length >= 3 ? swingsAll[swingsAll.length - 3] : null;
+    /* The establishing pattern's own gap swing, if it has one: when
+       the walk reaches this call, swingsAll's last four ARE the
+       pattern — [..., a, b, c, d] with d the near swing and c the
+       far swing — so the first of the four that sits at a gap price
+       is a gap segment the pattern itself is read from. It is kept
+       on the call record so the final explanation's gap note can
+       name THIS trend's gap: a gap that set some earlier, dead
+       trend's far control (or one this trend's far control has
+       since moved off) must never be narrated as this trend's line
+       (chart 9w4xh1, Michael's catch, Oct 31, 2026: the note cited
+       candle 5's 173.75 — the dead uptrend's first Higher Low,
+       itself superseded by 174.07 — as the surviving downtrend's
+       Lower High, while the gap the reversal actually counted,
+       candle 20's gap up to 192.30, the pattern's first swing,
+       went unmentioned). The alignment is checked on price and
+       type, not index, so a synthetic near swing standing in for
+       its leg (the gap-confirmation path) still matches. */
+    var patGapE = null;
+    if (swingsAll.length >= 4) {
+      var pA = swingsAll[swingsAll.length - 4], pB = swingsAll[swingsAll.length - 3],
+          pC = swingsAll[swingsAll.length - 2], pD = swingsAll[swingsAll.length - 1];
+      if (pD.price === nearSw.price && pD.type === nearSw.type &&
+          pC.price === farSw.price && pC.type === farSw.type) {
+        var pList = [pA, pB, pC, pD];
+        for (var pI = 0; pI < pList.length; pI++) {
+          if (!gapPriced(pList[pI])) continue;
+          /* The note must name the candle that actually GAPPED and
+             its open — not the pattern swing itself: a gap swing's
+             extreme is read over its whole gap segment, so in
+             Realistic mode it can land on a later candle of that
+             segment, at a close that candle never gapped to. The
+             gap candle is the first candle of the range carrying
+             the gap swing (the swing itself, or its twin — an end
+             swing sitting on the same body point). A candidate
+             whose range start shows no real gap is dropped. */
+          var gsE = pList[pI].gap ? pList[pI] : null, gI;
+          if (!gsE) {
+            for (gI = 0; gI < chart.swingEvents.length; gI++) {
+              var eE = chart.swingEvents[gI];
+              if (eE.gap && eE.idx === pList[pI].idx && eE.price === pList[pI].price &&
+                  eE.type === pList[pI].type) { gsE = eE; break; }
+            }
+          }
+          if (!gsE || !segRanges[gsE.seg]) continue;
+          var gIdxE = segRanges[gsE.seg].from;
+          if (gIdxE <= 0) continue;
+          var gOpenE = candles[gIdxE].o, gPrevE = candles[gIdxE - 1].c;
+          if (Math.abs(gOpenE - gPrevE) <= 0.01) continue;
+          patGapE = { idx: gIdxE, price: gOpenE, type: gOpenE > gPrevE ? "high" : "low" };
+          break;
+        }
+      }
+    }
     /* When the third segment becomes fully formed: the first candle
        that closes against the third leg, or -1 when the chart ends
        first (Mr. Black, Oct 27, 2026: a segment completes only at
@@ -1343,7 +1396,7 @@ function analyze(chart, lineMode) {
     }
     lastEst = { dir: dir, callIdx: callIdxE, confirmIdx: confirmIdxE, crossIdx: crossIdxE,
                 nearPrice: nearSw.price, farPrice: farSw.price, spot: !!spotConfirm,
-                bPrice: bSwE ? bSwE.price : null };
+                bPrice: bSwE ? bSwE.price : null, patGap: patGapE };
     if (spotConfirm) {
       confirmedReversal = true;
       pushEvent("confirmed", nearSw.idx,
@@ -3629,34 +3682,40 @@ function analyze(chart, lineMode) {
       "completing the zigzag — while that segment was still active; it " +
       "became fully formed at the close of candle " + (lastEst.confirmIdx + 1) + ".");
   }
-  if (gapEv.length && (answer === "up" || answer === "down")) {
+  if (answer === "up" || answer === "down") {
     var gw = dirWords(answer);
-    /* The note names the first gap that set a far control —
-       except when the trend it answers for was itself confirmed at
-       its break close (Bug 9): then it names the gap that set THIS
-       trend's far control, which an earlier episode's gap can
-       precede in gapEv. Entries a Bug 9 confirmation pushed for a
-       trend that has since died are skipped on the other side, so
-       the note reads as it did before that episode existed. */
-    var gNotePrice = null;
-    var gapFinal = gapRevFinal && lastEst && lastEst.callIdx === gapRevFinal.callIdx;
-    if (gapFinal && far) {
-      for (var gi2 = gapEv.length - 1; gi2 >= 0; gi2--) {
-        if (gapEv[gi2].idx === far.idx && gapEv[gi2].price === far.price) {
-          gNotePrice = gapEv[gi2].price;
-          break;
-        }
-      }
+    /* The note answers for the SURVIVING trend only, and it names
+       that trend's own gap — never a gap borrowed from an earlier
+       episode (chart 9w4xh1, Bug 10: the old selection took the
+       first gap that ever set a far control, so a dead uptrend's
+       superseded gap price was narrated as the surviving
+       downtrend's Lower High). Two honest cases, in order:
+       1. The far control in force at the end sits at a gap price:
+          the note names that price — the far control's own — as
+          before. This also covers a trend confirmed at its break
+          close (Bug 9), whose far control is the one in force.
+       2. The far control is not a gap price, but the pattern that
+          established this trend is itself read from a gap swing
+          (recorded on the call record as patGap): the note names
+          that gap as a counted segment of the establishing
+          pattern — it claims nothing about the control line.
+       When neither holds, there is no gap note: a gap that only
+       ever served a dead trend, or a control this trend has since
+       moved off, is told by that episode's own steps and frames,
+       not by the final answer. gapEv is no longer consulted here:
+       its entries record every episode's gap-priced far control,
+       which is exactly the borrowing this selection must avoid. */
+    if (far && far.gapMoved) {
+      parts.push("Note the gap: a gap counts as a segment all by itself — here it was the retracement, and it moved the " + gw.far +
+        " to the gap price, " + fmt(far.price) + " — the line the " + gw.trend +
+        " then had to hold.");
+    } else if (lastEst && lastEst.dir === answer && lastEst.patGap) {
+      var pg = lastEst.patGap;
+      parts.push("Note the gap: candle " + (pg.idx + 1) + " gapped " +
+        (pg.type === "low" ? "down" : "up") + " to " + fmt(pg.price) +
+        " — a gap counts as a segment all by itself, and that gap segment is one of the " +
+        "segments counted in the three-segment pattern that established the " + gw.trend + ".");
     }
-    if (gNotePrice === null) {
-      for (var gi3 = 0; gi3 < gapEv.length; gi3++) {
-        if (!gapEv[gi3].mine) { gNotePrice = gapEv[gi3].price; break; }
-      }
-      if (gNotePrice === null) gNotePrice = gapEv[0].price;
-    }
-    parts.push("Note the gap: a gap counts as a segment all by itself — here it was the retracement, and it moved the " + gw.far +
-      " to the gap price, " + fmt(gNotePrice) + " — the line the " + gw.trend +
-      " then had to hold.");
   }
   if (pokeEv.length && (answer === "up" || answer === "down")) {
     var pw = dirWords(answer);
