@@ -256,8 +256,8 @@ var PRISTINE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
    panel quotes it, and screenshots carry it — so a stale copy (an
    old saved file, the Netlify backup, an older shared link) can be
    told apart from the current build at a glance. */
-var QUIZ_VERSION = "v2026.10.31.6";
-var QUIZ_BUILD_DATE = "October 31, 2026";
+var QUIZ_VERSION = "v2026.11.01.1";
+var QUIZ_BUILD_DATE = "November 1, 2026";
 
 /* ---------------- utilities ---------------- */
 /* Every random draw in chart generation goes through RNG(), which is
@@ -1088,7 +1088,7 @@ function analyze(chart, lineMode) {
   var lastBreakSeg = -1, pokeDone = false;
   var unfinished = null;   // a three-segment pattern whose third leg is the chart's final segment
   var lastEst = null;      // the most recent establishment's call record {dir, callIdx, confirmIdx, crossIdx, nearPrice, farPrice, spot} — the final views' active-third-segment handling
-  var estRecords = [];     // every establishment {callIdx, anchorPos, dir} — the segment-display episodes: the drawn segment lines run from an establishment's anchor swing (its pattern's first swing, a position in swingsAll) until the next establishment retires them at its call close
+  var estRecords = [];     // every establishment {callIdx, anchorPos, dir} — the segment-display episodes: the drawn segment lines run from an establishment's anchor swing (its pattern's first swing — the swing the establishing zigzag's first segment runs from, a position in swingsAll) until the next establishment retires them at its call close
   var deferredFar = null;  // a far relocation whose print candle overshoots into the next segment {sw, legDir} — see relocateFar
   var gapSynD = null;      // a synthetic swing standing in swingsAll for the third leg of a gap-inclusive counter-pattern confirmed at a break (see tryGapPatternConfirm), until the leg's registered swing arrives and merges into it {sw, reg}
   var gapRevFinal = null;  // a trend change confirmed by tryGapPatternConfirm {dir, callIdx} — the final explanation tells the confirmed-reversal story only when the trend it answers for is that very establishment (the sticky confirmedReversal flag is establish()'s own, for its spot confirmations)
@@ -1343,7 +1343,7 @@ function analyze(chart, lineMode) {
           if (gIdxE <= 0) continue;
           var gOpenE = candles[gIdxE].o, gPrevE = candles[gIdxE - 1].c;
           if (Math.abs(gOpenE - gPrevE) <= 0.01) continue;
-          patGapE = { idx: gIdxE, price: gOpenE, type: gOpenE > gPrevE ? "high" : "low" };
+          patGapE = { idx: gIdxE, price: gOpenE, type: gOpenE > gPrevE ? "high" : "low", pos: pI };
           break;
         }
       }
@@ -1396,37 +1396,28 @@ function analyze(chart, lineMode) {
       if (confirmIdxE !== -1 && callIdxE > confirmIdxE) callIdxE = confirmIdxE;
     }
     /* The display episode this establishment opens: the drawn
-       segment lines are counted from the dead trend's final
-       extreme when this establishment follows a break — the same
-       anchor the post-break segment count itself uses (chart
-       9w4xh1: segment 1 of the reversal runs from the old
-       uptrend's Higher High, not from any later swing) — and never
-       from later than the pattern's own first swing (swingsAll's
-       fourth from last here, the a of [..., a, b, c, d]), so the
-       drawing always contains the whole pattern that established
-       the trend. A first establishment has no dead trend: its
-       anchor is the pattern's first swing. The dead extreme is
-       located by a direct scan of swingsAll, not anchorPosOf:
-       positions in swingsFull and swingsAll diverge once a
-       gap-confirmation has stood a synthetic swing in the ledger. */
+       segment lines are the three segments of the establishing
+       zigzag itself — impulse, correction, impulse — counted from
+       the pattern's own first swing (swingsAll's fourth from last
+       here, the a of [..., a, b, c, d]), the swing the zigzag's
+       first segment runs from. Segments before that swing are not
+       part of the pattern that made the trend, so they leave the
+       drawing at the call close (Michael, Nov 1, 2026, correcting
+       the Oct 31 episode anchor: chart 9w4xh1's downtrend is
+       established by the impulse at candles 20–22, the correction
+       at 23–26 and the impulse at 27–30, so the drawing at the
+       candle-30 call shows those three segments, counted from
+       candle 20's gap swing at 192.30 — the segments running from
+       the old uptrend's Higher High down to that swing, the
+       17–19 leg and the gap leg, are not among the three and
+       retire there). The post-break segment COUNT in the Summary
+       and replay captions still runs from the dead trend's final
+       extreme — that is a count of every leg since the break,
+       not the establishing pattern — but the drawn episode is
+       the zigzag's three segments and the legs that follow them. */
     var patPosE = Math.max(0, swingsAll.length - 4);
     var anchorPosE = patPosE;
     var anchorKindE = "pattern";
-    var deadEpE = null, deI;
-    for (deI = episodes.length - 1; deI >= 0; deI--) {
-      if (episodes[deI].brokenAt != null) { deadEpE = episodes[deI]; break; }
-    }
-    if (deadEpE && deadEpE.nearSnap) {
-      var nTypeE = deadEpE.dir === "up" ? "high" : "low", dsI, dsE;
-      for (dsI = swingsAll.length - 1; dsI >= 0; dsI--) {
-        dsE = swingsAll[dsI];
-        if (dsE.idx === deadEpE.nearSnap.idx && dsE.price === deadEpE.nearSnap.price &&
-            dsE.type === nTypeE) {
-          if (dsI <= anchorPosE) { anchorPosE = dsI; anchorKindE = "prevExtreme"; }
-          break;
-        }
-      }
-    }
     lastEst = { dir: dir, callIdx: callIdxE, confirmIdx: confirmIdxE, crossIdx: crossIdxE,
                 nearPrice: nearSw.price, farPrice: farSw.price, spot: !!spotConfirm,
                 bPrice: bSwE ? bSwE.price : null, patGap: patGapE, anchorPos: anchorPosE };
@@ -1703,9 +1694,12 @@ function analyze(chart, lineMode) {
     }
   }
   /* The last four swings read as a possible trend pattern: returns
-     {dir, nearSw, farSw} when swings a,b,c,d form three directional
-     segments in one direction — nearSw (d) is the third segment's
-     extreme, farSw (c) the second segment's — and null otherwise.
+     {dir, nearSw, farSw} when swings a,b,c,d form a three-segment
+     zigzag in one direction — impulse (a→b), correction (b→c),
+     impulse (c→d); no three segments in the same direction are
+     needed, the middle segment runs against the trend — nearSw (d)
+     is the third segment's extreme, farSw (c) the correction's —
+     and null otherwise.
      The pattern still requires the third segment's extreme to cross
      the first segment's extreme (b): that cross is what makes the
      leg the pattern's third segment at all. What Mr. Black's
@@ -1965,8 +1959,10 @@ function analyze(chart, lineMode) {
         fmt(chart.initialSwing.price) + " to a " + (up ? "high" : "low") + " of " +
         fmt(ext.price) + " at candle " + (ext.idx + 1) + " — the first impulse.";
     }
-    var teach = " An impulse and a correction are two directional segments — on their own " +
-      "they are not a trend: a trend needs three.";
+    var teach = " An impulse and a correction are two segments — on their own they are " +
+      "not a trend: the trend comes with the third segment, a second impulse that " +
+      "crosses the first segment's extreme, completing the zigzag — impulse, " +
+      "correction, impulse. No three segments in the same direction are needed.";
     if (si === 1) {
       if (gapTxt) {
         return gapTxt + rangeTxt + " then carry price to " + fmt(ext.price) + " at candle " +
@@ -2034,8 +2030,9 @@ function analyze(chart, lineMode) {
       var head = headGap + headRange + (up ? " rise" : " fall") + " to " + fmt(ext.price) +
         " at candle " + (ext.idx + 1) + ". Counted from the old " + dw.trend +
         "'s final extreme — the " + dw.near + " at " + fmt(dead.nearSnap.price) +
-        " — this is directional segment " + count + " since the break. ";
-      if (count < 3) return head + "A new trend needs three, so " + (3 - count) + " more to go.";
+        " — this is segment " + count + " since the break. ";
+      if (count < 3) return head + "A new trend needs three segments — impulse, correction, " +
+        "impulse — so " + (3 - count) + " more to go.";
       return head + "Three or more have now printed, but they have not completed a new " +
         "trend pattern, so the market stays in consolidation.";
     }
@@ -2922,12 +2919,13 @@ function analyze(chart, lineMode) {
           done + " since the break (candles " + legSpanText(r - 1) + ") is " +
           "complete, counted from " + anchor + ". ";
         if (done >= 3) {
-          return txt + "Three or more directional segments have now printed since the break, " +
-            "but they have not completed a new trend pattern, so the market stays in " +
+          return txt + "Three or more segments have now printed since the break, " +
+            "but they have not completed a new trend pattern — a three-segment zigzag, " +
+            "impulse, correction, impulse — so the market stays in " +
             "consolidation — no live control points.";
         }
         return txt + "Segment " + count + " since the break is now under way. A new trend " +
-          "needs three directional segments" +
+          "needs three segments — impulse, correction, impulse" +
           (count === 3 ? " — and the third counts once it crosses the first segment's extreme, completing the zigzag, while it is still active"
                        : ", so " + (3 - count) + " more to go") +
           " — no live control points yet.";
@@ -2935,12 +2933,13 @@ function analyze(chart, lineMode) {
       if (count >= 3) {
         return headCore + ". Segment " + count + " since the break is under way (candles " +
           (legFromIdx(r) + 1) + "–" + (fi + 1) + " so far), counted from " + anchor + ". Three or " +
-          "more directional segments have printed since the break, but they have not completed " +
-          "a new trend pattern, so the market stays in consolidation — no live control points.";
+          "more segments have printed since the break, but they have not completed " +
+          "a new trend pattern — a three-segment zigzag, impulse, correction, impulse — " +
+          "so the market stays in consolidation — no live control points.";
       }
       return headCore + ". Segment " + count + " since the break is under way — candles " +
         (legFromIdx(r) + 1) + "–" + (fi + 1) + " so far, " + move + " — counted from " + anchor + ". " +
-        "A new trend needs three directional segments, so " + (3 - count) + " more to go — " +
+        "A new trend needs three segments — impulse, correction, impulse — so " + (3 - count) + " more to go — " +
         "no live control points yet.";
     }
     /* Before any trend or break: the same narration for the chart's
@@ -2959,9 +2958,9 @@ function analyze(chart, lineMode) {
     if (countP > 3) return null;
     return headCore + ". Segment " + countP + " of the three a trend needs is under way — " +
       "candles " + (legFromIdx(r) + 1) + "–" + (fi + 1) + " so far, " + move + ". No trend yet: " +
-      "a trend is called when three directional segments form a pattern and the third " +
-      "crosses the first segment's extreme — the third may still be active — and control " +
-      "points come with the call.";
+      "a trend is called when three segments form a zigzag — impulse, correction, impulse — " +
+      "and the third crosses the first segment's extreme — the third may still be active — " +
+      "and control points come with the call.";
   }
   var frames = [];
   var lg = -1, breaksSeen = 0;
@@ -3272,9 +3271,10 @@ function analyze(chart, lineMode) {
           ", and it becomes final when the third segment completes.";
       if (chBrk) {
         fcap = breakCapByIdx[fi] + " That same close completes the break the new trend " +
-          "needed: with the old trend's control point broken, three directional " +
-          "segments counted from its final extreme, and the third segment's cross of " +
-          "the first segment's extreme completing the zigzag, the new " + ew.trend +
+          "needed: with the old trend's control point broken, and the three segments " +
+          "of the new zigzag — impulse, correction, impulse — already in place, its " +
+          "third segment's cross of the first segment's extreme completing the zigzag, " +
+          "the new " + ew.trend +
           " is called from this close — its third segment still active, not " +
           "fully formed. " + pairTxtC;
       } else {
@@ -3478,8 +3478,9 @@ function analyze(chart, lineMode) {
     } else {
       fcap = formingCaption(fi, false) ||
         ("Candle " + (fi + 1) + " closed at " + fmt(candles[fi].c) +
-        ". No trend yet — a trend is called on three directional segments, the third of " +
-        "which may still be active, before any control points exist — so there is nothing to move.");
+        ". No trend yet — a trend is called on three segments — impulse, correction, " +
+        "impulse — the third of which may still be active, before any control points " +
+        "exist — so there is nothing to move.");
     }
     /* If this close also PRINTED a relocation whose own caption
        branch lost to a bigger event on the same close — an
@@ -3593,20 +3594,26 @@ function analyze(chart, lineMode) {
       }
     }
     /* The segment lines change over at an establishment, narrated
-       at the call close (Michael, Oct 31, 2026): every segment of
-       the story in force is drawn — the trend's own legs and the
-       segments that form between its two control points alike —
-       each dashed while it is still active and solid once a candle
-       has closed against it, and a segment line leaves the drawing
-       only when a new trend is established. At that close the
-       drawing takes up the segments that established the new
-       trend, counted from its pattern's first swing (for a
-       reversal, the dead trend's final extreme), and the segments
-       before that swing are no longer drawn. When one of the
-       establishing segments is a gap segment, the note names it:
-       a gap counts as a segment all by itself — and when the gap
-       segment is the first of the three, the segment to its left
-       is the last of the ones that leave, and the note says so. */
+       at the call close (Michael, Oct 31, 2026; anchor corrected
+       Nov 1, 2026): every segment of the story in force is drawn —
+       the trend's own legs and the segments that form between its
+       two control points alike — each dashed while it is still
+       active and solid once a candle has closed against it, and a
+       segment line leaves the drawing only when a new trend is
+       established. At that close the drawing takes up the three
+       segments that established the new trend — impulse,
+       correction, impulse — counted from the pattern's own first
+       swing, and the segments before that swing are no longer
+       drawn: they are not part of the establishing zigzag. When
+       one of the three is a gap segment, the note names it: a gap
+       counts as a segment all by itself. And when the count
+       itself starts at a gap price — the pattern's first swing is
+       the swing a gap printed — the note says so too: that gap
+       segment is the last of the ones that leave, and the first
+       counted segment runs from the price the gap left (chart
+       9w4xh1: the count starts at candle 20's gap swing, 192.30,
+       so the leg from the Higher High down to 191.87 and the gap
+       leg up to 192.30 both leave at the candle-30 call). */
     (function () {
       if (lineMode) return;
       for (var ei2 = 0; ei2 < estRecords.length; ei2++) {
@@ -3617,15 +3624,11 @@ function analyze(chart, lineMode) {
         var wE = dirWords(rec.dir);
         var aSw = swingsAll[rec.anchorPos];
         var dropB = aSw, dropA = swingsAll[rec.anchorPos - 1];
-        var dropSpan = (legStartIdx(dropA, dropB.idx) + 1) + "–" + (dropB.idx + 1);
-        var anchorTxt = rec.anchorKind === "prevExtreme"
-          ? "the previous trend's final extreme — " + fmt(aSw.price) + " at candle " + (aSw.idx + 1)
-          : fmt(aSw.price) + " at candle " + (aSw.idx + 1);
-        var gapTxtE = "";
-        var gLimE = (rec.patPos != null ? rec.patPos : rec.anchorPos) - rec.anchorPos + 3;
-        for (var gi2 = 1; gi2 <= gLimE; gi2++) {
-          var gSwE = swingsAll[rec.anchorPos + gi2];
-          if (!gSwE || !gapPriced(gSwE)) continue;
+        var dropFrom = legStartIdx(dropA, dropB.idx) + 1, dropTo = dropB.idx + 1;
+        var dropSpan = dropFrom === dropTo ? "candle " + dropTo
+                                            : "candles " + dropFrom + "–" + dropTo;
+        var anchorTxt = fmt(aSw.price) + " at candle " + (aSw.idx + 1);
+        var gapCandleOf = function (gSwE) {
           var gEvE = gSwE.gap ? gSwE : null, gI2, eE2;
           if (!gEvE) {
             for (gI2 = 0; gI2 < chart.swingEvents.length; gI2++) {
@@ -3634,21 +3637,38 @@ function analyze(chart, lineMode) {
                   eE2.type === gSwE.type) { gEvE = eE2; break; }
             }
           }
-          var gCandleE = gEvE && segRanges[gEvE.seg] ? segRanges[gEvE.seg].from : gSwE.idx;
-          gapTxtE = " One of the segments counted from there is a gap segment: candle " +
+          return gEvE && segRanges[gEvE.seg] ? segRanges[gEvE.seg].from : gSwE.idx;
+        };
+        var gapTxtE = "";
+        var gLimE = (rec.patPos != null ? rec.patPos : rec.anchorPos) - rec.anchorPos + 3;
+        for (var gi2 = 1; gi2 <= gLimE; gi2++) {
+          var gSwE = swingsAll[rec.anchorPos + gi2];
+          if (!gSwE || !gapPriced(gSwE)) continue;
+          var gCandleE = gapCandleOf(gSwE);
+          gapTxtE = " One of the three counted segments is a gap segment: candle " +
             (gCandleE + 1) + " gapped " + (gSwE.type === "low" ? "down" : "up") + " to " +
             fmt(gSwE.price) + " — a gap counts as a segment all by itself, and here it " +
-            "is segment " + gi2 + " counted from that swing." +
-            (gi2 === 1 ? " That is why the segment to the left of the gap (candles " +
+            "is segment " + gi2 + " of the three counted from that swing." +
+            (gi2 === 1 ? " That is why the segment to the left of the gap (" +
               dropSpan + ", " + fmt(dropA.price) + " to " + fmt(dropB.price) +
               ") is no longer drawn." : "");
           break;
         }
+        if (!gapTxtE && gapPriced(aSw)) {
+          var aCandleE = gapCandleOf(aSw);
+          gapTxtE = " The count starts at a gap price: candle " + (aCandleE + 1) +
+            " gapped " + (aSw.type === "low" ? "down" : "up") + " to " + fmt(aSw.price) +
+            " — a gap counts as a segment all by itself, and that gap segment is the " +
+            "last of the segments that leave the drawing: the first of the three " +
+            "counted segments runs from the price the gap left.";
+        }
         fcap += " About the segment lines: a new " + wE.trend + " is established at this " +
-          "close, so the drawing changes over to the new trend's own segments, counted " +
+          "close, so the drawing changes over to the three segments that established " +
+          "the new trend — impulse, correction, impulse — counted " +
           "from " + anchorTxt + ". The segments before that swing — the last of them " +
-          "candles " + dropSpan + ", " + fmt(dropA.price) + " to " + fmt(dropB.price) +
-          " — are no longer drawn: a segment line leaves the drawing only when a new trend " +
+          dropSpan + ", " + fmt(dropA.price) + " to " + fmt(dropB.price) +
+          " — are no longer drawn: they are not part of the establishing zigzag, and a " +
+          "segment line leaves the drawing only when a new trend " +
           "takes over, never just because a newer segment printed. From here every segment " +
           "of the new trend stays drawn, dashed while it is still active and solid once a " +
           "candle has closed against it." + gapTxtE;
@@ -3682,14 +3702,14 @@ function analyze(chart, lineMode) {
       if (breaks.length) {
         var ab = breaks[breaks.length - 1], abw = dirWords(ab.dir);
         parts.push("The " + abw.trend + " died when " + (ab.gap ? "price gapped " : "a candle closed ") +
-          abw.beyond + " its " + abw.far + " (" + fmt(ab.level) + "). Three fresh directional " +
-          "segments then formed " + w.pattern + ", and the new " + w.trend + " was called at " +
+          abw.beyond + " its " + abw.far + " (" + fmt(ab.level) + "). Three fresh segments " +
+          "— impulse, correction, impulse — then formed " + w.pattern + ", and the new " + w.trend + " was called at " +
           "candle " + (lastEst.callIdx + 1) + " — the close where its third segment crossed " +
           "the first segment's extreme, completing the zigzag. That third " +
           "segment is still active — not fully formed — at the end of the chart, but an " +
           "active third segment counts, so the market is in " + statePhrase(answer) + ". " + pairTxtA);
       } else {
-        parts.push("Three directional segments printed " + w.pattern + ", and the " + w.trend +
+        parts.push("Three segments — impulse, correction, impulse — printed " + w.pattern + ", and the " + w.trend +
           " was called at candle " + (lastEst.callIdx + 1) +
           " — the close where its third segment crossed the first segment's extreme, " +
           "completing the zigzag. That third segment is still active — not fully formed — when the chart ends, " +
@@ -3703,7 +3723,7 @@ function analyze(chart, lineMode) {
         "control point. No candle ever closed " + w.beyond + " the " + w.far + " at " +
         fmt(far.price) + ", so the " + w.trend + " is still the state at the end of the chart.");
     } else if (!breaks.length) {
-      parts.push("Three directional segments — impulse, correction, impulse — printed " +
+      parts.push("Three segments — impulse, correction, impulse — printed " +
         w.pattern + ", establishing the " + w.trend + ". No candle ever closed " + w.beyond +
         " the controlling " + w.far + " (" + fmt(far.price) + "), so the " + w.trend +
         " is still in force at the end of the chart.");
@@ -3723,7 +3743,7 @@ function analyze(chart, lineMode) {
     } else {
       var b1 = breaks[breaks.length - 1], ow3 = dirWords(b1.dir);
       parts.push("The " + ow3.trend + " died when " + (b1.gap ? "price gapped " : "a candle closed ") +
-        ow3.beyond + " its " + ow3.far + " (" + fmt(b1.level) + "). Three fresh directional segments then formed " +
+        ow3.beyond + " its " + ow3.far + " (" + fmt(b1.level) + "). Three fresh segments — impulse, correction, impulse — then formed " +
         w.pattern + ", establishing a new " + w.trend + " — still in force at the end, with " +
         "its " + w.far + " at " + fmt(far.price) + ".");
     }
@@ -3738,7 +3758,7 @@ function analyze(chart, lineMode) {
           "control points — so it cannot establish a new " + uw.trend + ": the market is in " +
           "consolidation at the end of the chart.");
       } else {
-        parts.push("Three directional segments printed " + uw.pattern +
+        parts.push("Three segments — impulse, correction, impulse — printed " + uw.pattern +
           " — but that pattern's swings were already spent, acted on as an earlier trend's " +
           "control points, so they cannot establish a trend a second time: consolidation.");
       }
@@ -3749,12 +3769,12 @@ function analyze(chart, lineMode) {
         parts.push("Candle " + (b.idx + 1) + (b.gap ? " gapped " : " closed ") + bw.beyond +
           " the controlling " + bw.far + " (" + fmt(b.level) + "), so the " + bw.trend +
           " died at its last control point. Only " + (counterSegs === 1 ? "one counter-segment" : "two counter-segments") +
-          " followed — a new trend needs three directional segments — so the market is in " +
+          " followed — a new trend needs three segments — impulse, correction, impulse — so the market is in " +
           "consolidation at the end of the chart.");
       } else {
         parts.push("Candle " + (b.idx + 1) + (b.gap ? " gapped " : " closed ") + bw.beyond +
           " the controlling " + bw.far + " (" + fmt(b.level) + "), so the " + bw.trend +
-          " died at its last control point. The follow-through never strung together three directional segments into a " +
+          " died at its last control point. The follow-through never strung together three segments — impulse, correction, impulse — into a " +
           "new trend, so the market is in consolidation at the end of the chart.");
       }
     } else if (chart.kind === "short") {
@@ -3768,7 +3788,7 @@ function analyze(chart, lineMode) {
     } else {
       parts.push("The swings kept overlapping inside one range — no three-segment sequence " +
         "ever made higher highs with higher lows, or lower lows with lower highs. Without " +
-        "three directional segments there is no trend: consolidation.");
+        "three segments — impulse, correction, impulse — there is no trend: consolidation.");
     }
   }
   if ((answer === "up" || answer === "down") && lastEst && !lastEst.spot && !activeAtEnd &&
@@ -3794,8 +3814,12 @@ function analyze(chart, lineMode) {
        2. The far control is not a gap price, but the pattern that
           established this trend is itself read from a gap swing
           (recorded on the call record as patGap): the note names
-          that gap as a counted segment of the establishing
-          pattern — it claims nothing about the control line.
+          that gap — as one of the pattern's counted segments when
+          the gap swing sits inside the pattern, or, when the gap
+          swing is the pattern's first swing (pos 0), as the price
+          the count starts from: the gap segment itself precedes
+          the count and is not one of the three. Either way the
+          note claims nothing about the control line.
        When neither holds, there is no gap note: a gap that only
        ever served a dead trend, or a control this trend has since
        moved off, is told by that episode's own steps and frames,
@@ -3810,8 +3834,12 @@ function analyze(chart, lineMode) {
       var pg = lastEst.patGap;
       parts.push("Note the gap: candle " + (pg.idx + 1) + " gapped " +
         (pg.type === "low" ? "down" : "up") + " to " + fmt(pg.price) +
-        " — a gap counts as a segment all by itself, and that gap segment is one of the " +
-        "segments counted in the three-segment pattern that established the " + gw.trend + ".");
+        " — a gap counts as a segment all by itself, and " +
+        (pg.pos === 0
+          ? "the three-segment pattern that established the " + gw.trend + " is counted " +
+            "from the price that gap left: its first segment runs from there."
+          : "that gap segment is one of the " +
+            "segments counted in the three-segment pattern that established the " + gw.trend + "."));
     }
   }
   if (pokeEv.length && (answer === "up" || answer === "down")) {
@@ -4121,13 +4149,14 @@ function chartSVG(q, opts) {
      candle), already cut to the episode in force at that frame.
      Without opts.swings, the answered view takes the final
      episode's swings from the analysis (result.episodeStart): the
-     segments counted from the swing the surviving trend was
-     established from. Either way every segment of the episode is
-     drawn — the segments between the control points included —
-     dashed while its leg is still active, solid once a candle has
-     closed against it — and an earlier episode's segments are not
-     drawn at all: they left the drawing at the close that
-     established the new trend. */
+     establishing zigzag's three segments — impulse, correction,
+     impulse — counted from the pattern's first swing, and the
+     legs that followed them. Either way every segment of the
+     episode is drawn — the segments between the control points
+     included — dashed while its leg is still active, solid once a
+     candle has closed against it — and an earlier episode's
+     segments are not drawn at all: they left the drawing at the
+     close that established the new trend. */
   var sw = opts.swings || (q.result ? q.result.swings : []);
   if (!opts.swings && !opts.summary && q.result && q.result.episodeStart) {
     sw = sw.slice(q.result.episodeStart);
@@ -4708,11 +4737,11 @@ function setCandleStyle(s) {
    and in the Rules overlay, so the wording can never drift apart. */
 var RULES_LIST_HTML =
   '<ul class="rules">' +
-  "<li><strong>Rule 1 — Three segments make a trend.</strong> An impulse and a correction alone are not a trend. And a segment can be as small as one candle: a single candle against the move, however small, is a whole segment by itself and sets an HL or LH. A tiny gap against the move counts the same way. The trend is called at the close where the third segment crosses the first segment's extreme, completing the zigzag — segments 1 and 2 complete, segment 3 under way — and the third segment may still be active, not fully formed: it does not have to complete, but without the cross there is no trend. Its line stays dotted while it is active and turns solid when the segment becomes fully formed. Two segments alone are no trend. If a trend is already in force, an opposing pattern cannot be called until that trend's control point has first been broken; then three segments counted from the dead trend's final extreme establish the new trend, the third active or complete.</li>" +
+  "<li><strong>Rule 1 — Three segments make a trend: impulse, correction, impulse.</strong> No three segments in the same direction are needed — the middle segment runs against the trend. An impulse and a correction alone are not a trend. And a segment can be as small as one candle: a single candle against the move, however small, is a whole segment by itself and sets an HL or LH. A tiny gap against the move counts the same way. The trend is called at the close where the third segment crosses the first segment's extreme, completing the zigzag — segments 1 and 2 complete, segment 3 under way — and the third segment may still be active, not fully formed: it does not have to complete, but without the cross there is no trend. Its line stays dotted while it is active and turns solid when the segment becomes fully formed. Two segments alone are no trend. If a trend is already in force, an opposing pattern cannot be called until that trend's control point has first been broken; then the three segments of the new zigzag — impulse, correction, impulse — establish the new trend, the third crossing the first segment's extreme, active or complete.</li>" +
   "<li><strong>Rule 2 — Control points come from candle bodies</strong> — the Higher High and Higher Low in an uptrend, the Lower Low and Lower High in a downtrend. Wicks don't count.</li>" +
   "<li><strong>Rule 3 — A trend dies on a close — and a gap counts as a candle.</strong> The moment one candle closes beyond the far control point, the old trend is over. A gap that jumps beyond the far control point breaks the trend the same way; only a wick poking through leaves it alive.</li>" +
   "<li><strong>Rule 4 — A gap short of the line is a retracement</strong> (when gaps appear). A gap against the trend that stops short of the far control point is that correction's extreme — when the trend resumes, the far control point sits at the gap price.</li>" +
-  "<li><strong>Rule 5 — After a break, it's consolidation</strong> until three new directional segments establish a new trend — the third may still be active, not fully formed — even if they form inside the old range first.</li>" +
+  "<li><strong>Rule 5 — After a break, it's consolidation</strong> until a new three-segment zigzag — impulse, correction, impulse — establishes a new trend, its third segment crossing the first segment's extreme and allowed to still be active, not fully formed — even if the three form inside the old range first.</li>" +
   "</ul>";
 
 /* The rules as an overlay panel, so they can be re-read from the
@@ -4872,10 +4901,12 @@ function showLegend() {
     "the replay a swing joins the lines only at that close, never at its own candle, " +
     "which cannot yet be known to be its leg's end. A segment line leaves the drawing " +
     "only when a new trend is established: at that close the previous story's segments " +
-    "vanish, and the segments that established the new trend — counted from the dead " +
-    "trend's final extreme, the third of them allowed to still be active and dashed — " +
+    "vanish, and the three segments that established the new trend — impulse, " +
+    "correction, impulse, counted from the swing the first of them runs from, the " +
+    "third of them allowed to still be active and dashed — " +
     "are drawn in their place. A gap counts as a segment all by itself, so a gap " +
-    "segment can be one of the establishing segments.</p>" +
+    "segment can be one of the three establishing segments — or the swing the count " +
+    "starts from can be the price a gap left.</p>" +
     "<h3>Why the wait?</h3>" +
     "<p>A segment exists only after the first candle that closes in the opposite direction — " +
     "that is how Mr. Black teaches it. Until that candle closes, the last candle of the leg can " +
@@ -5559,10 +5590,13 @@ function renderStepThrough() {
     "only at its confirmation close, never at its own candle: until a candle closes " +
     "against its leg, the leg's end cannot be known, so the leg stays dashed and follows " +
     "the closes. A segment line leaves the drawing only when a new trend is established: " +
-    "at that close the earlier segments vanish and the drawing takes up the segments " +
-    "that established the new trend. A gap counts as a segment all by itself, so a gap " +
-    "segment can be one of the establishing segments — and when it is the first of them, " +
-    "the segment to the left of the gap is among those that leave the drawing at that close. " +
+    "at that close the earlier segments vanish and the drawing takes up the three " +
+    "segments that established the new trend — impulse, correction, impulse. A gap " +
+    "counts as a segment all by itself, so a gap segment can be one of the three — " +
+    "and when it is the first of them, the segment to the left of the gap is among " +
+    "those that leave the drawing at that close; the count can also start at the " +
+    "price a gap left, and then the gap segment is itself the last of the lines " +
+    "that leave. " +
     "Tap the ⓘ button " +
     "in the controls above for the full guide to the lines and labels.</p></div>";
   bindRulesButtons();
