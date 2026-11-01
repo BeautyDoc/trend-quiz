@@ -148,7 +148,7 @@
       .small.off{ opacity:.45; }
       .styleopt{ display:flex; align-items:center; gap:12px; margin-top:16px; flex-wrap:wrap; }
       .styleopt-label{ font-size:17px; font-weight:600; }
-      .segctl{ display:inline-flex; border:2px solid var(--btn-line); border-radius:10px; overflow:hidden; }
+      .segctl{ display:inline-flex; flex-wrap:wrap; border:2px solid var(--btn-line); border-radius:10px; overflow:hidden; }
       .segbtn{
         appearance:none; border:0; background:var(--btn-bg); color:var(--ink);
         padding:10px 18px; font-size:16px; font-weight:700; cursor:pointer; min-height:44px;
@@ -173,6 +173,19 @@
          still clock on the start gate, the giant final time on the
          results card, the initials entry and the leaderboard. */
       .exclock{ font-size:23px; font-weight:800; font-variant-numeric:tabular-nums; }
+      /* Master mode: the per-chart countdown beside the run clock.
+         It turns red for the last ten seconds of a chart's minute. */
+      .mxcount{ font-size:23px; font-weight:800; font-variant-numeric:tabular-nums; }
+      .mxcount.low{ color:var(--red); }
+      .rankline{ font-size:19px; font-weight:800; margin:6px 0 0; }
+      .rankladder{ margin:10px 0 0; padding:0; list-style:none; }
+      .rankladder li{
+        display:flex; align-items:baseline; gap:14px;
+        border-top:1px solid var(--line); padding:7px 0; font-variant-numeric:tabular-nums;
+      }
+      .rankladder li:first-child{ border-top:0; }
+      .rankladder .r-n{ color:var(--muted); font-weight:700; width:86px; flex:none; }
+      .rankladder .r-name{ font-weight:800; }
       .gateclock{ font-size:46px; font-weight:800; font-variant-numeric:tabular-nums; line-height:1.1; margin:4px 0 2px; }
       .exbig{
         font-size:54px; font-weight:800; line-height:1.1; margin:8px 0 2px;
@@ -243,8 +256,8 @@ var PRISTINE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
    panel quotes it, and screenshots carry it — so a stale copy (an
    old saved file, the Netlify backup, an older shared link) can be
    told apart from the current build at a glance. */
-var QUIZ_VERSION = "v2026.10.29.2";
-var QUIZ_BUILD_DATE = "October 29, 2026";
+var QUIZ_VERSION = "v2026.10.31.2";
+var QUIZ_BUILD_DATE = "October 31, 2026";
 
 /* ---------------- utilities ---------------- */
 /* Every random draw in chart generation goes through RNG(), which is
@@ -342,7 +355,14 @@ function buildTrend(s, mods) {
        trend resumes (rule 4). A gap that jumped the line would break
        the trend instead (rule 3) — that is a different chart. */
     var Wg = Math.abs(nearPrice - farPrice);
-    var G = farPrice + s * Wg * rand(0.10, 0.30);
+    /* Realism (Oct 31, 2026): the gap is measured back from the near
+       price and capped against the PRICE, not just the range — on a
+       wide trend the old draw (a third to a half of the way across a
+       range that can itself run to 13% of the price) produced 4–7%
+       overnight gaps, the routine monster jumps real charts almost
+       never show. The gap still stops short of the far line (rule 4);
+       it is simply a plausible size — at most about 2% of the price. */
+    var G = nearPrice - s * Math.min(Wg * rand(0.35, 0.55), p0 * rand(0.008, 0.020));
     R.gapDip(randi(3, 4), G, nearPrice - s * Wg * rand(0.35, 0.55));
     farAfter = G;
   } else {
@@ -351,12 +371,12 @@ function buildTrend(s, mods) {
     R.add(randi(4, 6), nearPrice - s * dMag, opts);      // pullback, closes hold
     farAfter = R.p;
   }
-  R.add(randi(5, 7), nearPrice + s * rand(2.5, 8));      // new extreme, trend continues
+  R.add(randi(5, 7), nearPrice + s * Math.max(rand(2.5, 8), m1 * rand(0.18, 0.40))); // new extreme, trend continues
   var newNear = R.p;
   if (R.total() < 25) {
     var fMag = Math.abs(newNear - farAfter) * rand(0.30, 0.55);
     R.add(randi(3, 4), newNear - s * fMag);
-    R.add(randi(4, 5), newNear + s * rand(2, 7));
+    R.add(randi(4, 5), newNear + s * Math.max(rand(2, 7), m1 * rand(0.15, 0.35)));
   }
   return R;
 }
@@ -385,20 +405,28 @@ function buildReversal(s, established) {
   }
   var dEnd = farOld + s * rand(3, 9);                    // break leg, closes beyond farOld
   var brkOpts = null;
-  if (INCLUDE_GAPS && RNG() < 0.4) {
+  if (INCLUDE_GAPS && RNG() < 0.18) {
     /* Sometimes the break arrives as a gap: the leg's first candle
-       opens already beyond farOld — a break just the same (rule 3). */
-    brkOpts = { gapOpen: farOld + s * rand(1.0, 3.5) };
+       opens already beyond farOld — a break just the same (rule 3).
+       Kept uncommon and modest: a gap that jumps a whole range is a
+       shock event in real charts, not a routine open. */
+    var goB = farOld + s * rand(0.5, 2.0);
+    /* Realism cap: the gap is measured from the previous close (the
+       leg's start). If price is sitting far from the line, a single
+       gap across it would be a double-digit jump — so the gap break
+       is only used when price already hovers near the line, and the
+       leg breaks by closes the rest of the time. */
+    if (Math.abs(goB - base) <= p0 * 0.025) brkOpts = { gapOpen: goB };
   }
   R.add(randi(4, 6), dEnd, brkOpts);
   var eMag = Math.abs(dEnd - base) * rand(0.30, 0.50);
   R.add(randi(3, 5), dEnd - s * eMag);                   // correction of the new move
-  R.add(randi(5, 7), dEnd + s * rand(2.5, 8));           // third segment -> new trend
+  R.add(randi(5, 7), dEnd + s * Math.max(rand(2.5, 8), m1 * rand(0.18, 0.40))); // third segment -> new trend
   var newNear = R.p;
   if (R.total() < 25) {
     var fMag = Math.abs(newNear - (dEnd - s * eMag)) * rand(0.3, 0.5);
     R.add(randi(3, 4), newNear - s * fMag);
-    R.add(randi(4, 5), newNear + s * rand(2, 7));
+    R.add(randi(4, 5), newNear + s * Math.max(rand(2, 7), m1 * rand(0.15, 0.35)));
   }
   return R;
 }
@@ -425,12 +453,15 @@ function buildInsideRange(s, confirm) {
   R.add(randi(3, 5), R.p + s * b2);                      // counter segment 2 (retrace)
   if (confirm) {
     var cOpts = null;
-    if (INCLUDE_GAPS && RNG() < 0.4) cOpts = { gapOpen: farPrice - s * rand(1.0, 3.0) }; // the confirming break arrives as a gap
+    if (INCLUDE_GAPS && RNG() < 0.18) {
+      var goC = farPrice - s * rand(0.5, 1.8); // the confirming break arrives as a gap
+      if (Math.abs(goC - R.p) <= p0 * 0.025) cOpts = { gapOpen: goC }; // realism cap: no monster gaps (see buildReversal)
+    }
     R.add(randi(4, 6), farPrice - s * rand(2, 6), cOpts); // counter segment 3 closes beyond far
   } else {
     R.add(randi(4, 6), farPrice + s * W * rand(0.10, 0.18)); // stops inside the range
   }
-  R.add(randi(3, 4), R.p + s * W * rand(0.08, 0.15));    // small bounce, changes nothing
+  R.add(randi(3, 4), R.p + s * W * rand(0.14, 0.22));    // small bounce, changes nothing
   return R;
 }
 
@@ -448,7 +479,10 @@ function buildBreakChop(s) {
   R.add(randi(5, 7), R.p + s * cMag);
   var nearPrice = R.p;
   var bcOpts = null;
-  if (INCLUDE_GAPS && RNG() < 0.4) bcOpts = { gapOpen: farPrice - s * rand(1.0, 3.0) }; // break arrives as a gap
+  if (INCLUDE_GAPS && RNG() < 0.18) {
+    var goBc = farPrice - s * rand(0.5, 1.8); // break arrives as a gap
+    if (Math.abs(goBc - nearPrice) <= p0 * 0.025) bcOpts = { gapOpen: goBc }; // realism cap: no monster gaps (see buildReversal)
+  }
   R.add(randi(4, 6), farPrice - s * rand(3, 8), bcOpts); // break leg
   var brk = R.p;
   var bounceMag = Math.abs(nearPrice - brk) * rand(0.30, 0.55);
@@ -471,7 +505,10 @@ function buildBreakFew(s) {
   R.add(randi(5, 7), R.p + s * cMag);
   var nearPrice = R.p;
   var bfOpts = null;
-  if (INCLUDE_GAPS && RNG() < 0.4) bfOpts = { gapOpen: farPrice - s * rand(1.0, 3.0) }; // break arrives as a gap
+  if (INCLUDE_GAPS && RNG() < 0.18) {
+    var goBf = farPrice - s * rand(0.5, 1.8); // break arrives as a gap
+    if (Math.abs(goBf - nearPrice) <= p0 * 0.025) bfOpts = { gapOpen: goBf }; // realism cap: no monster gaps (see buildReversal)
+  }
   R.add(randi(4, 6), farPrice - s * rand(3, 8), bfOpts); // break leg
   var brkEnd = R.p;
   if (RNG() < 0.6) {
@@ -517,7 +554,7 @@ function buildShort(s) {
   R.add(randi(5, 7), R.p - s * bMag);
   R.add(randi(6, 8), first - s * m1 * rand(0.04, 0.10)); // falls short of the first extreme
   var cEnd = R.p;
-  R.add(randi(4, 6), R.p - s * m1 * rand(0.05, 0.12));   // drift, still no third segment
+  R.add(randi(3, 5), R.p - s * m1 * rand(0.10, 0.17));   // drift, still no third segment
   R.add(randi(3, 5), R.p + s * Math.abs(cEnd - R.p) * rand(0.30, 0.60)); // small bounce, stays short
   return R;
 }
@@ -578,13 +615,18 @@ function buildCandles(R) {
   R.segs.forEach(function (seg, si) {
     var from = candles.length;
     var startPrice = seg.gapOpen != null ? seg.gapOpen : seg.from;
-    if (INCLUDE_GAPS && seg.gapOpen == null && seg.len >= 3 && Math.abs(seg.to - seg.from) > 5 && RNG() < 0.30) {
+    if (INCLUDE_GAPS && seg.gapOpen == null && seg.len >= 3 && Math.abs(seg.to - seg.from) > 5 && RNG() < 0.15) {
       /* Cosmetic gap at the segment start, in either direction: with the
          segment's travel (part of the ongoing move) or against it. These
          register no swing, but they are real candles to the engine: one
          that jumps the far control point breaks the trend, exactly like
-         the registered gap retrace (gapDip) can. */
-      var gf = RNG() < 0.45 ? -rand(0.05, 0.16) : rand(0.08, 0.22);
+         the registered gap retrace (gapDip) can. Realism (Oct 31, 2026):
+         overnight gaps on ordinary charts are small and not constant —
+         the old draw fired on 30% of segments and jumped up to 22% of a
+         segment's whole travel, which produced the routine double-digit
+         gaps real charts almost never show. Now rarer and capped at a
+         few percent of the segment's travel. */
+      var gf = RNG() < 0.45 ? -rand(0.02, 0.07) : rand(0.03, 0.10);
       startPrice = seg.from + (seg.to - seg.from) * gf;
     }
     /* Gap segment (the head teacher's rule): even a tiny gap against
@@ -602,7 +644,7 @@ function buildCandles(R) {
     if (INCLUDE_GAPS && seg.gapOpen == null && seg.pokeLevel == null &&
         seg.len >= 5 && Math.abs(seg.to - seg.from) > 5 && AUXRNG() < 0.25) {
       gapJ = 2 + Math.floor(AUXRNG() * (seg.len - 3));
-      gapSize = Math.abs(seg.to - seg.from) * (0.08 + AUXRNG() * 0.14);
+      gapSize = Math.abs(seg.to - seg.from) * (0.04 + AUXRNG() * 0.06);
     }
     var w = [], tw = 0, i, x;
     if (CANDLE_STYLE === "realistic") {
@@ -619,7 +661,7 @@ function buildCandles(R) {
         tries++;
         w = []; tw = 0;
         for (i = 0; i < seg.len; i++) {
-          x = RNG() < 0.30 ? -rand(0.15, 0.65) : rand(0.30, 1.75);
+          x = RNG() < 0.30 ? -rand(0.40, 0.85) : rand(0.55, 1.80);
           w.push(x); tw += x;
         }
         if (tw < seg.len * 0.30) continue;
@@ -636,17 +678,45 @@ function buildCandles(R) {
     } else {
       for (i = 0; i < seg.len; i++) { x = rand(0.55, 1.45); w.push(x); tw += x; }
     }
+    if (CANDLE_STYLE === "realistic") {
+      /* Realism (Oct 31, 2026): real quiet stretches still have bodies —
+         what looked wrong was three or four pin-sized candles parked in
+         a row. Break up any run of three consecutive small steps by
+         giving the third a full-sized body (sign preserved, so a
+         counter-trend candle stays counter-trend and rule 1 is
+         untouched), then re-total the weights the closes are built
+         from. */
+      var ti2;
+      for (ti2 = 2; ti2 < w.length; ti2++) {
+        if (Math.abs(w[ti2]) < 0.85 && Math.abs(w[ti2 - 1]) < 0.85 && Math.abs(w[ti2 - 2]) < 0.85) {
+          w[ti2] = (w[ti2] < 0 ? -1 : 1) * rand(1.15, 1.45);
+        }
+      }
+      tw = 0;
+      for (ti2 = 0; ti2 < w.length; ti2++) tw += w[ti2];
+    }
     var cum = 0, closes = [];
     for (i = 0; i < seg.len; i++) { cum += w[i]; closes.push(startPrice + (seg.to - startPrice) * (cum / tw)); }
     closes[seg.len - 1] = seg.to;
     var stepScale = Math.max(Math.abs(seg.to - startPrice) / seg.len, 0.4);
-    var wLo = CANDLE_STYLE === "realistic" ? 0.05 : 0.10;
+    var wLo = CANDLE_STYLE === "realistic" ? 0.22 : 0.10;
     var wHi = CANDLE_STYLE === "realistic" ? 1.05 : 0.70;
     for (i = 0; i < seg.len; i++) {
       var o = i === 0 ? startPrice : (i === gapJ ? closes[i - 1] - seg.dir * gapSize : closes[i - 1]);
       var c = closes[i];
       var h = Math.max(o, c) + rand(wLo, wHi) * stepScale;
       var l = Math.min(o, c) - rand(wLo, wHi) * stepScale;
+      if (CANDLE_STYLE === "realistic") {
+        /* Realism (Oct 31, 2026): a visible wick on every candle. In a
+           quiet segment stepScale sits at its floor and a drawn wick
+           could shrink to a tenth of a point, so the candle read as a
+           wickless dash parked next to its neighbours. The floor is
+           small and purely cosmetic — control points and verdicts
+           come from bodies, never wicks. */
+        var wickFloor = Math.max(0.25, Math.abs(c) * 0.0012);
+        h = Math.max(h, Math.max(o, c) + wickFloor);
+        l = Math.min(l, Math.min(o, c) - wickFloor);
+      }
       if (seg.pokeLevel != null && i === seg.pokeIdx) {
         if (seg.dir > 0) h = seg.pokeLevel + rand(0.5, 2.4);
         else l = seg.pokeLevel - rand(0.5, 2.4);
@@ -4361,7 +4431,7 @@ function attachCursor(svg, G) {
 var app = document.getElementById("app");
 var INCLUDE_GAPS = true;  // start-screen toggle; false = truly gap-free charts
 var CANDLE_STYLE = "easy";     // start-screen toggle: "easy" | "realistic" | "line"
-var STYLE_PICK = "easy";       // the style the reader picked — the three above, or "expert".
+var STYLE_PICK = "easy";       // the style the reader picked — the three above, "expert" or "master".
                                // Expert is a way of playing, not a fourth rendering: its charts
                                // are Candles (Realistic) charts, so while Expert is picked
                                // CANDLE_STYLE stays "realistic" (see setCandleStyle) and a
@@ -4369,6 +4439,7 @@ var STYLE_PICK = "easy";       // the style the reader picked — the three abov
 var SHOW_GAP_MARKERS = true;   // start-screen toggle: draw the wickless gap candles
 var quiz = null;       // {questions, idx, answers, mode}
 var ex = null;         // Expert run state {phase, streak, t0, timer, nextTimer, lock, chart, result}
+var mx = null;         // Master run state {phase, streak, t0, deadline, timer, nextTimer, lock, chart, result}
 var bd = null;         // Segment Summary state {step}
 var st = null;         // control-point replay state {step, total, timer, speed}
 var answered = false;  // current question answered (until try-again)
@@ -4415,17 +4486,21 @@ function bindDownloads() {
 
 function setCandleStyle(s) {
   STYLE_PICK = s;
-  CANDLE_STYLE = s === "expert" ? "realistic" : s;
+  CANDLE_STYLE = (s === "expert" || s === "master") ? "realistic" : s;
   var e = document.getElementById("styleEasy"), r = document.getElementById("styleReal"),
-      l = document.getElementById("styleLine"), x = document.getElementById("styleExpert");
+      l = document.getElementById("styleLine"), x = document.getElementById("styleExpert"),
+      m = document.getElementById("styleMaster");
   if (e) e.classList.toggle("on", s === "easy");
   if (r) r.classList.toggle("on", s === "realistic");
   if (l) l.classList.toggle("on", s === "line");
   if (x) x.classList.toggle("on", s === "expert");
+  if (m) m.classList.toggle("on", s === "master");
   /* The start button's job changes with the pick: a set of 10 in the
-     three reading styles, the Expert gate in Expert. */
+     three reading styles, the Expert gate in Expert, the Master gate
+     in Master. */
   var sb = document.getElementById("start");
-  if (sb) sb.textContent = s === "expert" ? "Start an Expert run" : "Start a set of 10";
+  if (sb) sb.textContent = s === "expert" ? "Start an Expert run"
+    : s === "master" ? "Start a Master run" : "Start a set of 10";
   /* Line view never considers gaps, so while Line is selected the
      Include-gaps option stays visible but grayed out and disabled.
      Its checkbox state — and the stored INCLUDE_GAPS value — is left
@@ -4680,6 +4755,21 @@ function showAbout() {
     "for practising how to read the state of a market from a chart.</p>" +
     "<h3>What's new in this build</h3>" +
     "<ul>" +
+    "<li><strong>Master mode:</strong> a fifth way to play, one rung above Expert — an endless " +
+    "streak game on Candles (Realistic) charts. How many can you answer correctly in a row with " +
+    "no mistakes, when each chart gives you only one minute to decide? A wrong answer, a minute " +
+    "that runs out, or giving up ends the run. Ranks are earned as the streak climbs: Master " +
+    "at 10, Ninja at 15, Turbo Charged at 20, Grand Imperial Poobah at 25, Phantom at 30 — " +
+    "and Mr. Black at 40 in a row. Master keeps its own best " +
+    "streak and its own leaderboard on this device.</li>" +
+    "<li><strong>More realistic candles:</strong> gaps are smaller and rarer, the way real charts " +
+    "behave — a gap no longer routinely jumps a tenth of the chart, and break gaps (which jump " +
+    "the whole range by their nature) are now the occasional shock they are in real trading " +
+    "rather than an everyday event. Quiet stretches no longer draw as rows of pin-sized candles " +
+    "with no wicks: every realistic candle carries a visible wick, and three tiny bodies in a " +
+    "row are broken up by a full-sized one. The rules are unchanged — a small counter-trend " +
+    "candle is still a segment of its own (rule 1), and a gap that jumps the far control point " +
+    "still breaks the trend (rule 3).</li>" +
     "<li><strong>Trend changes:</strong> when a three-segment pattern has already formed against " +
     "a live trend and a candle then closes past the old trend's controlling HL/LH, the new trend " +
     "is now called at that close — the order of the pattern and the break no longer matters. " +
@@ -4802,6 +4892,7 @@ function recentHtml() {
 function renderIntro() {
   closeStepThrough();
   endExpertRun();
+  endMasterRun();
   quiz = null;
   app.innerHTML =
     "<h1>Trend Quiz</h1>" +
@@ -4818,11 +4909,12 @@ function renderIntro() {
     '<button type="button" class="segbtn' + (STYLE_PICK === "easy" ? " on" : "") + '" id="styleEasy">Candles (Easy)</button>' +
     '<button type="button" class="segbtn' + (STYLE_PICK === "realistic" ? " on" : "") + '" id="styleReal">Candles (Realistic)</button>' +
     '<button type="button" class="segbtn' + (STYLE_PICK === "expert" ? " on" : "") + '" id="styleExpert">Expert</button>' +
+    '<button type="button" class="segbtn' + (STYLE_PICK === "master" ? " on" : "") + '" id="styleMaster">Master</button>' +
     "</span></div>" +
-    '<p class="small">Line: a single line through the closes — no candles, no wicks — the way the Trade Phantoms mini-lesson teaches trend. In Line view the chart is judged on closes only and gaps are not considered, so the Include gaps option above does not apply while Line is selected. Candles (Easy): uniform candles — all green in an up-move, all red in a down-move. Candles (Realistic): body sizes vary and trends include counter-trend candles (some red in an up-move, some green in a down-move), like real price action — and under rule 1 each of those counter-trend candles, however small, is a segment of its own. Expert: the speed game, played on Candles (Realistic) charts — a clock starts when you tap Start, and the challenge is 10 correct answers in a row; one wrong answer ends the run.</p>' +
+    '<p class="small">Line: a single line through the closes — no candles, no wicks — the way the Trade Phantoms mini-lesson teaches trend. In Line view the chart is judged on closes only and gaps are not considered, so the Include gaps option above does not apply while Line is selected. Candles (Easy): uniform candles — all green in an up-move, all red in a down-move. Candles (Realistic): body sizes vary and trends include counter-trend candles (some red in an up-move, some green in a down-move), like real price action — and under rule 1 each of those counter-trend candles, however small, is a segment of its own. Expert: the speed game, played on Candles (Realistic) charts — a clock starts when you tap Start, and the challenge is 10 correct answers in a row; one wrong answer ends the run. Master: the endless game, also on Candles (Realistic) charts — how many in a row can you get with no mistakes, when every chart gives you only one minute to decide? Ranks along the way start at Master (10 in a row), then Ninja, Turbo Charged, Grand Imperial Poobah and Phantom — and, at 40 in a row, Mr. Black.</p>' +
     '<label class="gapopt"><input type="checkbox" id="gapMarkChk"' + (SHOW_GAP_MARKERS ? " checked" : "") + '> Show gap markers</label>' +
     '<p class="small">Gap markers draw each gap the way your instructor does — as a plain candle body with no wicks, sitting between the two candles — so the gap stands out as its own mark. Turn it off and a gap shows only as open space between the candles.</p>' +
-    '<div class="row"><button class="btn primary" id="start">' + (STYLE_PICK === "expert" ? "Start an Expert run" : "Start a set of 10") + "</button>" +
+    '<div class="row"><button class="btn primary" id="start">' + (STYLE_PICK === "expert" ? "Start an Expert run" : STYLE_PICK === "master" ? "Start a Master run" : "Start a set of 10") + "</button>" +
     '<a class="btn" data-dl download="trend-quiz.html">Download a standalone copy</a>' +
     '<button class="btn" data-about>About</button></div>' +
     '<p class="small">The download is this same quiz as one file — it opens in any browser and works offline, no internet needed.</p>' +
@@ -4840,10 +4932,13 @@ function renderIntro() {
   document.getElementById("styleReal").addEventListener("click", function () { setCandleStyle("realistic"); });
   document.getElementById("styleLine").addEventListener("click", function () { setCandleStyle("line"); });
   document.getElementById("styleExpert").addEventListener("click", function () { setCandleStyle("expert"); });
+  document.getElementById("styleMaster").addEventListener("click", function () { setCandleStyle("master"); });
   var gmChk = document.getElementById("gapMarkChk");
   gmChk.addEventListener("change", function () { SHOW_GAP_MARKERS = gmChk.checked; });
   document.getElementById("start").addEventListener("click", function () {
-    if (STYLE_PICK === "expert") renderExpertGate(); else newSet();
+    if (STYLE_PICK === "expert") renderExpertGate();
+    else if (STYLE_PICK === "master") renderMasterGate();
+    else newSet();
   });
   document.getElementById("replayBtn").addEventListener("click", startReplay);
   document.getElementById("replayIn").addEventListener("keydown", function (e) {
@@ -5366,6 +5461,7 @@ function expertIdHtml(q) {
 function renderExpertGate() {
   closeStepThrough();
   endExpertRun();
+  endMasterRun();
   quiz = null;
   var best = loadExpertBest();
   app.innerHTML =
@@ -5565,6 +5661,372 @@ function saveExpertInitials() {
   saveExpertBoard();
   ex.result.initSaved = v;
   renderExpertResults();
+}
+
+/* ---------------- Master mode ----------------
+   The endless game (Michael's idea, Oct 31, 2026), one rung above
+   Expert: Candles (Realistic) charts, sudden death, no finish line —
+   the score is how many charts you can answer correctly IN A ROW.
+   The pressure Expert lacks is pace: every chart carries its own
+   60-second countdown, starting the moment the chart appears. Run
+   out of minute and the run ends, exactly as a miss does; a Give up
+   button ends it voluntarily. Ranks are earned as the streak climbs
+   the ladder Michael approved (Oct 31, 2026) — Master at 10, Ninja
+   at 15, Turbo Charged at 20, Grand Imperial Poobah at 25, Phantom
+   at 30 and, at 40 in a row, Mr. Black — and are announced the
+   moment they are reached. Best streak and the local leaderboard (the top 4 streaks
+   on THIS device, ties broken by total time) live in localStorage
+   under the same guarded pattern as Expert's board. */
+var MASTER_CHART_MS = 60000;
+var MASTER_RANKS = [
+  { n: 10, name: "Master" },
+  { n: 15, name: "Ninja" },
+  { n: 20, name: "Turbo Charged" },
+  { n: 25, name: "Grand Imperial Poobah" },
+  { n: 30, name: "Phantom" },
+  { n: 40, name: "Mr. Black" }
+];
+function masterRankFor(streak) {
+  var r = null;
+  for (var i = 0; i < MASTER_RANKS.length; i++) if (streak >= MASTER_RANKS[i].n) r = MASTER_RANKS[i];
+  return r;
+}
+function masterNextRank(streak) {
+  for (var i = 0; i < MASTER_RANKS.length; i++) if (streak < MASTER_RANKS[i].n) return MASTER_RANKS[i];
+  return null;
+}
+var MASTER_BEST_KEY = "trendQuiz.masterBest.v1";
+var MASTER_BOARD_KEY = "trendQuiz.masterBoard.v1";
+var masterBestCache;            // undefined = not loaded yet; null = no finished run
+var masterBoardCache = null;    // null = not loaded yet
+function loadMasterBest() {
+  if (masterBestCache !== undefined) return masterBestCache;
+  masterBestCache = null;
+  try {
+    var raw = window.localStorage ? window.localStorage.getItem(MASTER_BEST_KEY) : null;
+    var v = raw == null ? NaN : parseInt(raw, 10);
+    if (isFinite(v) && v > 0) masterBestCache = v;
+  } catch (e) { /* storage unavailable: session-only best */ }
+  return masterBestCache;
+}
+function saveMasterBest() {
+  try {
+    if (window.localStorage && masterBestCache != null) {
+      window.localStorage.setItem(MASTER_BEST_KEY, String(masterBestCache));
+    }
+  } catch (e) { /* storage unavailable: nothing persists */ }
+}
+function masterBoardSort(a, b) { return b.streak - a.streak || a.ms - b.ms; }
+function loadMasterBoard() {
+  if (masterBoardCache) return masterBoardCache;
+  masterBoardCache = [];
+  try {
+    var raw = window.localStorage ? window.localStorage.getItem(MASTER_BOARD_KEY) : null;
+    if (raw) {
+      var arr = JSON.parse(raw);
+      if (Array.isArray(arr)) {
+        masterBoardCache = arr.filter(function (e) {
+          return e && typeof e.init === "string" && isFinite(e.streak) && isFinite(e.ms) && isFinite(e.t);
+        }).sort(masterBoardSort).slice(0, 4);
+      }
+    }
+  } catch (e) { /* storage unavailable: session-only board */ }
+  return masterBoardCache;
+}
+function saveMasterBoard() {
+  try {
+    if (window.localStorage) window.localStorage.setItem(MASTER_BOARD_KEY, JSON.stringify(masterBoardCache || []));
+  } catch (e) { /* storage unavailable: nothing persists */ }
+}
+function masterBoardHtml() {
+  var b = loadMasterBoard();
+  var out = '<div class="boardbox"><div class="bd-head"><h3 class="board-h">Master leaderboard</h3>' +
+    (b.length ? '<button class="btn topback" id="mxBoardClear">Clear</button>' : "") + "</div>";
+  if (!b.length) {
+    out += '<p class="small">No Master streaks yet — set the first one.</p>';
+  } else {
+    out += '<ul class="board-list">' + b.map(function (e, i) {
+      var rk = masterRankFor(e.streak);
+      return '<li><span class="b-rank">' + (i + 1) + '.</span><span class="b-init">' + esc(e.init) + "</span>" +
+        '<span class="b-time">' + e.streak + " in a row</span>" +
+        (rk ? '<span class="small">' + esc(rk.name) + "</span>" : "") +
+        '<span class="b-date">' + esc(fmtDate(e.t)) + "</span></li>";
+    }).join("") + "</ul>";
+  }
+  out += '<p class="small">The longest Master streaks on this device.</p></div>';
+  return out;
+}
+function bindMasterBoardClear(rerender) {
+  var c = document.getElementById("mxBoardClear");
+  if (c) c.addEventListener("click", function () {
+    masterBoardCache = [];
+    saveMasterBoard();
+    rerender();
+  });
+}
+function masterLadderHtml() {
+  return '<ul class="rankladder">' + MASTER_RANKS.map(function (k) {
+    return '<li><span class="r-n">' + k.n + ' in a row</span><span class="r-name">' + esc(k.name) + "</span></li>";
+  }).join("") + "</ul>";
+}
+function endMasterRun() {
+  if (!mx) return;
+  if (mx.timer) clearInterval(mx.timer);
+  if (mx.nextTimer) clearTimeout(mx.nextTimer);
+  mx = null;
+}
+function stopMasterTimer() {
+  if (mx && mx.timer) { clearInterval(mx.timer); mx.timer = null; }
+}
+function fmtCount(ms) {
+  var s = Math.max(0, Math.ceil(ms / 1000));
+  return Math.floor(s / 60) + ":" + (s % 60 < 10 ? "0" : "") + (s % 60);
+}
+function tickMasterClock() {
+  if (!mx || mx.phase !== "run") return;
+  var el = document.getElementById("mxClock");
+  if (el && mx.t0 != null) el.textContent = fmtClock(performance.now() - mx.t0);
+  var left = mx.deadline - performance.now();
+  var cd = document.getElementById("mxCount");
+  if (cd) {
+    cd.textContent = fmtCount(left);
+    cd.classList.toggle("low", left <= 10000);
+  }
+  if (left <= 0 && !mx.lock) masterTimeout();
+}
+
+/* The gate: the rules of the endless game, the rank ladder, the
+   personal best streak, the board, and the one Start button.
+   Neither clock runs here — the timers are created in
+   startMasterRun, on the Start tap. */
+function renderMasterGate() {
+  closeStepThrough();
+  endExpertRun();
+  endMasterRun();
+  quiz = null;
+  var best = loadMasterBest();
+  var bestRank = best != null ? masterRankFor(best) : null;
+  app.innerHTML =
+    "<h1>Master</h1>" +
+    '<p class="sub">The endless game: Candles (Realistic) charts, one after another, and the only ' +
+    "score is <strong>how many you can answer correctly in a row</strong> — there is no finish line. " +
+    "One wrong answer ends the run, and so does the clock: <strong>every chart gives you one minute</strong>. " +
+    "Let the minute run out and the run is over, so decide, guess, or give up — but do it inside the minute. " +
+    "Neither clock starts until you tap Start.</p>" +
+    '<div class="card">' +
+    '<p style="margin:0"><strong>The ranks</strong> — earned the moment your streak reaches them:</p>' +
+    masterLadderHtml() +
+    (best != null
+      ? '<p class="tier">Your best streak: <strong>' + best + " in a row</strong>" +
+        (bestRank ? " — " + esc(bestRank.name) : "") + ".</p>"
+      : '<p class="tier">No finished run yet. Master — 10 in a row — is the first rank.</p>') +
+    '<div class="row"><button class="btn primary" id="mxStart">Start</button>' +
+    '<button class="btn" id="mxGateHome">Back to start</button></div>' +
+    masterBoardHtml() +
+    "</div>";
+  document.getElementById("mxStart").addEventListener("click", startMasterRun);
+  document.getElementById("mxGateHome").addEventListener("click", renderIntro);
+  bindMasterBoardClear(function () { renderMasterGate(); });
+}
+function startMasterRun() {
+  endMasterRun();
+  endExpertRun();
+  CANDLE_STYLE = "realistic";  // Master charts are Realistic charts; STYLE_PICK stays "master"
+  mx = { phase: "run", streak: 0, t0: performance.now(), deadline: 0, timer: null, nextTimer: null,
+         lock: false, chart: genExpertChart(), result: null };
+  mx.timer = setInterval(tickMasterClock, 50);
+  renderMasterQuestion();
+}
+function renderMasterQuestion() {
+  var q = mx.chart;
+  rememberChart(q.chartId);
+  mx.deadline = performance.now() + MASTER_CHART_MS;  // this chart's own minute starts now
+  var rk = masterRankFor(mx.streak);
+  app.innerHTML =
+    '<div class="topbar"><span class="prog">Master</span>' + expertIdHtml(q) +
+    '<span class="score">Streak: ' + mx.streak + " in a row" + (rk ? " · " + esc(rk.name) : "") + "</span>" +
+    '<span class="mxcount" id="mxCount">' + fmtCount(MASTER_CHART_MS) + "</span>" +
+    '<span class="exclock" id="mxClock">' + fmtClock(performance.now() - mx.t0) + "</span>" +
+    '<button class="btn topback" id="mxHomeBtn">Back to start</button></div>' +
+    '<div class="card">' +
+    '<div id="chartbox">' + chartSVG(q, { bare: true }) + "</div>" +
+    '<p class="small">Drag across the chart — a cursor follows, naming the candle under it and the exact price at that height. The countdown is this chart\u2019s minute: when it reaches zero, the run ends.</p>' +
+    '<p class="qtext">What state is the market in at the end of this chart?</p>' +
+    '<div class="answers">' +
+    '<button class="ans-btn" data-a="up">Uptrend</button>' +
+    '<button class="ans-btn" data-a="down">Downtrend</button>' +
+    '<button class="ans-btn" data-a="consolidation">Consolidation</button>' +
+    "</div>" +
+    '<div id="feedback"></div>' +
+    '<div class="row"><button class="btn" id="mxGiveUp">Give up</button></div>' +
+    "</div>";
+  document.getElementById("mxHomeBtn").addEventListener("click", function () { endMasterRun(); renderIntro(); });
+  document.getElementById("mxGiveUp").addEventListener("click", masterGiveUp);
+  var btns = app.querySelectorAll(".ans-btn");
+  for (var i = 0; i < btns.length; i++) {
+    btns[i].addEventListener("click", function () { mxAnswer(this.getAttribute("data-a")); });
+  }
+  bindChartCursors();
+}
+function masterFinish(reason) {
+  var ms = performance.now() - mx.t0;
+  stopMasterTimer();
+  var best = loadMasterBest();
+  var isBest = mx.streak > 0 && (best == null || mx.streak > best);
+  if (isBest) { masterBestCache = mx.streak; saveMasterBest(); }
+  mx.result = { reason: reason, streak: mx.streak, ms: ms, t: Date.now(),
+                newBest: isBest, initSaved: null, initSkipped: false };
+}
+function mxAnswer(pick) {
+  if (!mx || mx.phase !== "run" || mx.lock) return;
+  mx.lock = true;
+  var q = mx.chart;
+  var correct = pick === q.result.answer;
+  var btns = app.querySelectorAll(".ans-btn");
+  for (var i = 0; i < btns.length; i++) {
+    var b = btns[i], a = b.getAttribute("data-a");
+    b.disabled = true;
+    b.classList.toggle("correct", a === q.result.answer);
+    b.classList.toggle("wrong", a === pick && !correct);
+  }
+  if (correct) {
+    mx.streak++;
+    var earned = null;
+    for (var j = 0; j < MASTER_RANKS.length; j++) if (MASTER_RANKS[j].n === mx.streak) earned = MASTER_RANKS[j];
+    document.getElementById("feedback").innerHTML =
+      '<div class="feedback"><p class="verdict ok">Correct — ' + mx.streak + " in a row.</p>" +
+      (earned ? '<p class="rankline">Rank earned: ' + esc(earned.name) + "!</p>" : "") + "</div>";
+    /* A new rank gets a longer beat so the player actually sees it. */
+    mx.nextTimer = setTimeout(function () {
+      if (!mx || mx.phase !== "run") return;
+      mx.chart = genExpertChart();
+      mx.lock = false;
+      renderMasterQuestion();
+    }, earned ? 1400 : 650);
+  } else {
+    masterFinish("miss");
+    renderMasterMiss(pick);
+  }
+}
+function masterTimeout() {
+  if (!mx || mx.phase !== "run" || mx.lock) return;
+  mx.lock = true;
+  masterFinish("time");
+  renderMasterMiss(null);
+}
+function masterGiveUp() {
+  if (!mx || mx.phase !== "run" || mx.lock) return;
+  mx.lock = true;
+  masterFinish("giveup");
+  renderMasterResults();
+}
+/* A miss — or a minute that ran out — still teaches: the chart
+   revealed with its control lines and the standard explanation,
+   then the results card. */
+function renderMasterMiss(pick) {
+  mx.phase = "miss";
+  var q = mx.chart;
+  var ans = q.result.answer;
+  var rk = masterRankFor(mx.result.streak);
+  var head = mx.result.reason === "time"
+    ? '<p class="verdict no">Time\u2019s up — the minute ran out before you called it. The answer is ' + stateName(ans) + ".</p>"
+    : '<p class="verdict no">Not quite — you said ' + stateName(pick) + "; the answer is " + stateName(ans) + ".</p>";
+  app.innerHTML =
+    '<div class="topbar"><span class="prog">Master</span>' + expertIdHtml(q) +
+    '<span class="score">Streak: ' + mx.result.streak + ' in a row</span>' +
+    '<span class="exclock">' + fmtClock(mx.result.ms) + "</span>" +
+    '<button class="btn topback" id="mxHomeBtn">Back to start</button></div>' +
+    '<div class="card">' +
+    '<div id="chartbox">' + chartSVG(q, { lines: q.result.finalLines, highlight: q.result.lastBreakIdx,
+      activeLegs: activeLegsAt(q.result, q.result.swings, q.candles.length - 1) }) + "</div>" +
+    '<div class="feedback">' +
+    head +
+    '<p class="explain">' + esc(q.result.explanation) + "</p>" +
+    '<p class="explain">That ends the run at ' + mx.result.streak + " in a row" +
+    (rk ? ", rank " + esc(rk.name) : "") + ", with " + fmtClock(mx.result.ms) + " on the clock.</p>" +
+    '<div class="row"><button class="btn primary" id="mxMissBtn">See your result</button></div>' +
+    "</div></div>";
+  document.getElementById("mxHomeBtn").addEventListener("click", function () { endMasterRun(); renderIntro(); });
+  document.getElementById("mxMissBtn").addEventListener("click", renderMasterResults);
+  bindChartCursors();
+}
+function masterQualifies() {
+  if (!mx || !mx.result || mx.result.streak <= 0) return false;
+  var b = loadMasterBoard();
+  if (b.length < 4) return true;
+  var last = b[b.length - 1];
+  return mx.result.streak > last.streak ||
+         (mx.result.streak === last.streak && mx.result.ms < last.ms);
+}
+/* The results card — written to be screenshotted: the streak in
+   big type, the rank it earned, the total time and the date. A
+   streak that makes the board offers the initials entry. */
+function renderMasterResults() {
+  if (!mx || !mx.result) { renderMasterGate(); return; }
+  mx.phase = "results";
+  var r = mx.result;
+  var rk = masterRankFor(r.streak);
+  var next = masterNextRank(r.streak);
+  var best = loadMasterBest();
+  var why = r.reason === "time" ? "The minute ran out on a chart."
+          : r.reason === "giveup" ? "You gave up — the streak stands as it was."
+          : "One miss ends it.";
+  var body =
+    '<p class="tier">' + why + "</p>" +
+    '<div class="exbig">' + r.streak + " in a row</div>" +
+    (rk ? '<p class="rankline">Rank: ' + esc(rk.name) + "</p>"
+        : '<p class="rankline">No rank yet — Master starts at 10 in a row.</p>') +
+    (next && rk ? '<p class="small">Next rank: ' + esc(next.name) + " at " + next.n + " in a row.</p>" : "") +
+    '<p class="tier">' + fmtClock(r.ms) + " on the clock · " + esc(fmtDate(r.t)) + "</p>" +
+    (r.newBest ? '<p class="verdict ok">New best streak!</p>'
+               : (best != null ? '<p class="small">Your best streak: ' + best + " in a row.</p>" : ""));
+  if (masterQualifies() && !r.initSaved && !r.initSkipped) {
+    body += '<div class="boardbox"><p style="margin:0"><strong>Add this streak to the leaderboard</strong></p>' +
+      '<div class="replayrow"><input class="initin" id="mxInitIn" type="text" maxlength="3" placeholder="ABC" ' +
+      'autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Your initials">' +
+      '<button class="btn primary" id="mxInitSave">Save</button>' +
+      '<button class="btn" id="mxInitSkip">Skip</button></div>' +
+      '<p class="err" id="mxInitErr" hidden>Initials are 2 or 3 letters.</p></div>';
+  } else if (r.initSaved) {
+    body += '<p class="small">On the board as <strong>' + esc(r.initSaved) + "</strong>.</p>";
+  }
+  body += masterBoardHtml();
+  body += '<div class="row"><button class="btn primary" id="mxAgain">Run it again</button>' +
+    '<button class="btn" id="mxResHome">Back to start</button></div>';
+  app.innerHTML = "<h1>Trend Quiz — Master</h1>" + '<div class="card">' + body + "</div>";
+  document.getElementById("mxAgain").addEventListener("click", renderMasterGate);
+  document.getElementById("mxResHome").addEventListener("click", renderIntro);
+  bindMasterBoardClear(function () { renderMasterResults(); });
+  if (masterQualifies() && !r.initSaved && !r.initSkipped) {
+    var inp = document.getElementById("mxInitIn");
+    inp.addEventListener("input", function () {
+      inp.value = inp.value.toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
+    });
+    inp.addEventListener("keydown", function (e) { if (e.key === "Enter") saveMasterInitials(); });
+    document.getElementById("mxInitSave").addEventListener("click", saveMasterInitials);
+    document.getElementById("mxInitSkip").addEventListener("click", function () {
+      mx.result.initSkipped = true;
+      renderMasterResults();
+    });
+    if (inp.focus) inp.focus();
+  }
+}
+function saveMasterInitials() {
+  if (!mx || !mx.result) return;
+  var inp = document.getElementById("mxInitIn");
+  var v = (inp.value || "").toUpperCase().replace(/[^A-Z]/g, "");
+  if (v.length < 2) {
+    var err = document.getElementById("mxInitErr");
+    if (err) err.hidden = false;
+    return;
+  }
+  var b = loadMasterBoard().slice();
+  b.push({ init: v, streak: mx.result.streak, ms: mx.result.ms, t: mx.result.t });
+  b.sort(masterBoardSort);
+  masterBoardCache = b.slice(0, 4);
+  saveMasterBoard();
+  mx.result.initSaved = v;
+  renderMasterResults();
 }
 
 /* ---------------- results ---------------- */
