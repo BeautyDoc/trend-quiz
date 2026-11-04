@@ -256,7 +256,7 @@ var PRISTINE_HTML = "<!DOCTYPE html>\n" + document.documentElement.outerHTML;
    panel quotes it, and screenshots carry it — so a stale copy (an
    old saved file, the Netlify backup, an older shared link) can be
    told apart from the current build at a glance. */
-var QUIZ_VERSION = "v2026.11.01.1";
+var QUIZ_VERSION = "v2026.11.01.5";
 var QUIZ_BUILD_DATE = "November 1, 2026";
 
 /* ---------------- utilities ---------------- */
@@ -307,8 +307,10 @@ function esc(s) {
    Each segment: {len, from, to, dir} travels monotonically from->to.
    Optional: gapOpen (first candle opens here instead of `from`),
    gapSwing (register the gap open as a swing point — the gap rule),
-   endSwing=false (no swing at segment end), pokeLevel/pokeIdx (one
-   candle's wick pokes beyond that price while its close stays inside). */
+   endSwing=false (no swing at segment end), pokeLevel (a wick poke
+   toward that price — buildCandles picks the segment candle whose
+   body comes closest to it and caps the wick at a plausible length,
+   so the poke crosses only when a body genuinely comes near it). */
 function Recipe(start) {
   this.start = start; this.p = start; this.segs = [];
 }
@@ -346,8 +348,19 @@ function buildTrend(s, mods) {
   var cMag = m1 * rand(0.95, 1.35);
   R.add(randi(5, 7), R.p + s * cMag);                    // impulse 2 -> trend established
   var nearPrice = R.p;
-  var dd = cMag - bMag;                                  // near-to-far distance
-  var dMag = dd * rand(0.35, 0.60);
+  /* The pullback retraces a share of impulse 2 itself — the true
+     near-to-far distance is cMag (far control to the new extreme).
+     It used to be keyed to cMag - bMag, the amount impulse 2
+     overshot the FIRST impulse's extreme, which shrinks toward zero
+     whenever impulse 2 only just crosses that extreme — squeezing
+     the pullback into a few points over 4–6 candles at any price
+     (chart c29q1y, candles 17–22: a 3.09-point drift at ~328, candle
+     ranges ~0.5% against 2–4% everywhere else on the chart). The
+     rand() draw is unchanged — same value, same stream position —
+     so every other segment of a replayed chart keeps its values,
+     and a 35–60% retrace of cMag still ends well short of the far
+     control, so the pullback's closes hold exactly as before. */
+  var dMag = cMag * rand(0.35, 0.60);
   var farAfter;
   if (mods.gap) {
     /* Gap retrace that stops SHORT of the far line: the gap is the
@@ -367,7 +380,7 @@ function buildTrend(s, mods) {
     farAfter = G;
   } else {
     var opts = {};
-    if (mods.poke) { opts.pokeLevel = farPrice; opts.pokeIdx = 1; }
+    if (mods.poke) { opts.pokeLevel = farPrice; }
     R.add(randi(4, 6), nearPrice - s * dMag, opts);      // pullback, closes hold
     farAfter = R.p;
   }
@@ -515,7 +528,15 @@ function buildBreakFew(s) {
     var bounceMag = Math.abs(nearPrice - brkEnd) * rand(0.30, 0.55);
     R.add(randi(3, 5), brkEnd + s * bounceMag);
   } else if (R.total() < 24) {
-    R.add(randi(3, 4), brkEnd - s * rand(1.5, 4));       // the break leg extends a little further
+    /* Realism (Nov 1, 2026): the extension used to be a flat 1.5–4
+       points whatever the price level, so on a high-priced chart the
+       whole segment travelled barely a point and its candles came
+       out pin-sized (chart eg8rp6, candles 23–25: bodies ~0.5,
+       ranges ~1.3, against ~8 elsewhere). Scale the travel to the
+       price like every other leg in these recipes. The rand() draw
+       itself is unchanged — same value, same stream position — so
+       every other candle of a replayed chart keeps its values. */
+    R.add(randi(3, 4), brkEnd - s * rand(1.5, 4) * Math.max(1, p0 * 0.01)); // the break leg extends a little further
   }
   return R;
 }
@@ -554,8 +575,34 @@ function buildShort(s) {
   R.add(randi(5, 7), R.p - s * bMag);
   R.add(randi(6, 8), first - s * m1 * rand(0.04, 0.10)); // falls short of the first extreme
   var cEnd = R.p;
-  R.add(randi(3, 5), R.p - s * m1 * rand(0.10, 0.17));   // drift, still no third segment
-  R.add(randi(3, 5), R.p + s * Math.abs(cEnd - R.p) * rand(0.30, 0.60)); // small bounce, stays short
+  /* Realism (Nov 1, 2026): the two closing segments travelled too
+     little for their candles to read as candles — the drift took
+     only 10–17% of the main move, and the bounce took 30–60% of
+     THAT, so on a high-priced chart the whole bounce could travel
+     under 1% of the price spread over 3–5 candles (chart e6pd4f:
+     the drift's bodies ran ~0.85 over candles 24–28 and the final
+     four candles, 29–32, came out pin-sized — bodies 0.23–0.72,
+     ranges ~0.3–0.5% of the price, against 1–5% earlier on the
+     chart). Both travels are now drawn as a share of the main move
+     m1 itself, like every other leg in these recipes, each clamped
+     to 70% of the room it actually has: the drift must stop short
+     of the correction's extreme (crossing it would complete a
+     three-segment zigzag the other way and establish the opposite
+     trend), and the bounce must stop short of the first extreme
+     (crossing it would establish the trend this recipe exists to
+     fail). The 70% clamp also leaves headroom for a Realistic
+     close straying past a segment's planned end mid-segment. The
+     drift also runs 3–4 candles instead of 3–5, so its larger
+     travel is not spread thin again at the top of the price range.
+     The recipe's rand() draws keep their values and order — the
+     drift's length draw simply reads 3–4 now — so every candle
+     before the drift keeps its values on a replayed chart, and the
+     two segments stay the chart's smaller closing segments. */
+  var driftRoom = Math.abs(cEnd - (first - s * bMag)); // cEnd to the correction's extreme
+  R.add(randi(3, 4), R.p - s * Math.min(m1 * rand(0.20, 0.30), driftRoom * 0.70)); // drift, still no third segment
+  var driftMag = Math.abs(R.p - cEnd);
+  var bounceRoom = driftMag + Math.abs(first - cEnd); // the drift's end back to the first extreme
+  R.add(randi(3, 5), R.p + s * Math.min(m1 * rand(0.16, 0.26), bounceRoom * 0.70)); // small bounce, stays short
   return R;
 }
 
@@ -701,6 +748,37 @@ function buildCandles(R) {
     var stepScale = Math.max(Math.abs(seg.to - startPrice) / seg.len, 0.4);
     var wLo = CANDLE_STYLE === "realistic" ? 0.22 : 0.10;
     var wHi = CANDLE_STYLE === "realistic" ? 1.05 : 0.70;
+    /* Wick poke toward the far control (poke segments only).
+       Realism (Nov 1, 2026): the poke used to be forced onto the
+       segment's second candle, with its wick endpoint set straight
+       to the far control level — but a pullback body can sit a long
+       way from that line (it retraces only part of the impulse that
+       set the line), so the wick spanned the whole distance plus
+       the overshoot: chart 9Avh7d, candle 22 — body top 99.82, line
+       at 105.45, wick tip 106.71, a 6.89-point wick on a chart whose
+       candles normally span 1.2–2.6. The poke now lands on the
+       candle whose BODY comes closest to the level (opens are the
+       previous closes here — poke segments never carry a gap split,
+       so the bodies are known before the loop), and its total wick
+       is capped at twice the segment's per-candle step, a long but
+       plausible pin wick. It therefore crosses the line only when
+       a body genuinely comes near it; otherwise it reads as a
+       probe toward the line that falls short, and no poke is
+       registered or narrated. Bodies, closes and the segment's
+       single rand() draw for the poke are all exactly as before —
+       the draw is consumed on the chosen candle whether or not
+       the wick reaches the level — so every replayed chart keeps
+       its bodies and its answer; wicks never decided anything. */
+    var pokeAt = -1, pokeDist = 0, pokeMaxWick = stepScale * 2;
+    if (seg.pokeLevel != null) {
+      var bestDist = Infinity, pi, po, pExt, pDist;
+      for (pi = 0; pi < seg.len; pi++) {
+        po = pi === 0 ? startPrice : closes[pi - 1];
+        pExt = seg.dir > 0 ? Math.max(po, closes[pi]) : Math.min(po, closes[pi]);
+        pDist = seg.dir > 0 ? seg.pokeLevel - pExt : pExt - seg.pokeLevel;
+        if (pDist < bestDist) { bestDist = pDist; pokeAt = pi; pokeDist = pDist; }
+      }
+    }
     for (i = 0; i < seg.len; i++) {
       var o = i === 0 ? startPrice : (i === gapJ ? closes[i - 1] - seg.dir * gapSize : closes[i - 1]);
       var c = closes[i];
@@ -717,9 +795,12 @@ function buildCandles(R) {
         h = Math.max(h, Math.max(o, c) + wickFloor);
         l = Math.min(l, Math.min(o, c) - wickFloor);
       }
-      if (seg.pokeLevel != null && i === seg.pokeIdx) {
-        if (seg.dir > 0) h = seg.pokeLevel + rand(0.5, 2.4);
-        else l = seg.pokeLevel - rand(0.5, 2.4);
+      if (seg.pokeLevel != null && i === pokeAt) {
+        var pokeOver = rand(0.5, 2.4);
+        var pokeWick = pokeDist <= 0 ? Math.min(pokeOver, pokeMaxWick)
+                                     : Math.min(pokeDist + pokeOver, pokeMaxWick);
+        if (seg.dir > 0) h = Math.max(h, Math.max(o, c) + pokeWick);
+        else l = Math.min(l, Math.min(o, c) - pokeWick);
       }
       candles.push({ o: o, h: h, l: l, c: c });
     }
