@@ -63,7 +63,7 @@
   <header>
     <h1>Zone Chart</h1>
     <p class="sub">Real candles for supply &amp; demand study — the foundation build: get real price data in, draw the chart. Mark supply &amp; demand zones by hand: tap a base, get the box in Mr. Black’s colors.</p>
-    <div class="ver">Zone Chart v0.2 · Foundation + hand-marked zones · November 5, 2026</div>
+    <div class="ver">Zone Chart v0.3 · Zones + copy chart image · November 5, 2026</div>
   </header>
 
   <div class="card">
@@ -107,6 +107,7 @@
       </label>
     </div>
     <div class="row" id="zonerow">
+      <button class="ghost" id="copybtn">Copy chart image</button>
       <button class="ghost" id="markbtn">Mark a zone</button>
       <span id="zonechoice" class="hidden">
         <button id="zcd">Demand zone</button>
@@ -138,7 +139,7 @@
     <p><b>Data honesty:</b> free and end-of-day feeds are delayed — perfect for zones, which are drawn on closed candles. Prices are as the provider reports them; nothing here is a recommendation.</p>
   </div>
 
-  <footer>Zone Chart v0.2 · Foundation + hand-marked zones · Built November 5, 2026 · Companion to the Trend Quiz (suzel.com)</footer>
+  <footer>Zone Chart v0.3 · Zones + copy chart image · Built November 5, 2026 · Companion to the Trend Quiz (suzel.com)</footer>
 </div>
 <script>
 "use strict";
@@ -495,6 +496,40 @@ function createZone(kind){
   renderZoneList();
   draw();
 }
+function downloadChartImage(out){
+  out.toBlob(b => {
+    if (!b) { setStatus("Could not make the chart image.", true); return; }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(b);
+    a.download = "zone-chart-" + (state.series ? state.series.symbol : "chart") + "-" + state.tf + ".png";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    setStatus("Your browser would not hand over the clipboard, so the chart image downloaded instead \u2014 attach that file to your email.");
+  }, "image/png");
+}
+async function copyChartImage(){
+  if (!state.series) { setStatus("Load a chart first, then copy it.", true); return; }
+  const dpr = window.devicePixelRatio || 1;
+  const head = Math.round(30 * dpr), foot = Math.round(26 * dpr);
+  const out = document.createElement("canvas");
+  out.width = cv.width; out.height = cv.height + head + foot;
+  const c = out.getContext("2d");
+  c.fillStyle = "#ffffff"; c.fillRect(0, 0, out.width, out.height);
+  c.fillStyle = "#111827"; c.font = "600 " + (13 * dpr) + "px system-ui";
+  c.fillText($("legend").textContent.trim(), 8 * dpr, 20 * dpr);
+  c.drawImage(cv, 0, head);
+  c.fillStyle = "#374151"; c.font = (11 * dpr) + "px system-ui";
+  c.fillText($("status").textContent.trim(), 8 * dpr, head + cv.height + 17 * dpr);
+  try {
+    if (!(navigator.clipboard && window.ClipboardItem)) throw new Error("no clipboard api");
+    const blob = await new Promise(r => out.toBlob(r, "image/png"));
+    if (!blob) throw new Error("no image");
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    setStatus("Chart image copied \u2014 paste it into your email with Ctrl+V.");
+  } catch(e) {
+    downloadChartImage(out);
+  }
+}
 function renderZoneList(){
   const box = $("zonelist"); if (!box) return;
   box.innerHTML = "";
@@ -572,6 +607,7 @@ $("zcd").addEventListener("click", () => createZone("demand"));
 $("zcs").addEventListener("click", () => createZone("supply"));
 $("zccancel").addEventListener("click", () => { resetMark(); draw(); });
 $("zclear").addEventListener("click", () => { writeZones([]); renderZoneList(); draw(); setStatus("Zones cleared for this symbol and timeframe."); });
+$("copybtn").addEventListener("click", copyChartImage);
 window.addEventListener("resize", draw);
 $("tdkey").value = localStorage.getItem("zc_tdkey") || "";
 $("relayurl").value = localStorage.getItem("zc_relay") || "https://zone-relay.michaeljosephsinclair.workers.dev";
