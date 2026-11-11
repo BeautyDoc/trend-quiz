@@ -268,6 +268,13 @@ function showSeries(symbol, name, source, candles, baseTf){
   resetMark();
   renderZoneList();
 }
+function refreshLegend(){
+  if (!state.series) return;
+  const candles = currentCandles();
+  const nm = $("legend").querySelector(".nm");
+  if (!nm || !candles.length) return;
+  nm.textContent = (state.series.name ? state.series.name + " · " : "") + TF_LABEL[state.tf] + " · " + candles.length + " candles · " + fmtDate(candles[0].t, state.tf) + " – " + fmtDate(candles[candles.length-1].t, state.tf);
+}
 function currentCandles(){
   if (!state.series) return [];
   if (state.series.baseTf === "1d" && state.tf !== "1d") return aggregate(state.series.candles, state.tf);
@@ -658,9 +665,9 @@ $("tfseg").addEventListener("click", e => {
   resetMark();
   if (!state.series) { renderZoneList(); return; }
   if (state.series.source.startsWith("Built-in sample")) loadSample();
-  else if (state.series.baseTf === "1d") { draw(); showReadout(currentCandles().length - 1); }
+  else if (state.series.baseTf === "1d") { draw(); showReadout(currentCandles().length - 1); refreshLegend(); renderZoneList(); }
   else if (state.series.symbol !== "CSV import") doLookup();
-  else { draw(); showReadout(currentCandles().length - 1); }
+  else { draw(); showReadout(currentCandles().length - 1); refreshLegend(); renderZoneList(); }
 });
 $("provider").addEventListener("change", () => {
   const relay = $("provider").value === "relay";
