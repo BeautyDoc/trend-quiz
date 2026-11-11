@@ -63,7 +63,7 @@
   <header>
     <h1>Zone Chart</h1>
     <p class="sub">Real candles for supply &amp; demand study — the foundation build: get real price data in, draw the chart. Mark supply &amp; demand zones by hand: tap a base, get the box in Mr. Black’s colors.</p>
-    <div class="ver">Zone Chart v0.4 · Crosshair + axis-drag scaling · November 11, 2026</div>
+    <div class="ver">Zone Chart v0.5 · Stored daily lookups · November 11, 2026</div>
   </header>
 
   <div class="card">
@@ -139,10 +139,11 @@
     <h3>About this foundation build</h3>
     <p>This page is step one of the supply &amp; demand zones tool: real candles in, chart drawn. Two doors, one chart — type a symbol and look it up, or import a CSV of candles (from thinkorswim or anywhere else). CSV imports of <i>daily</i> candles can be viewed as Weekly or Monthly too; the page builds those bars from the dailies.</p>
     <p><b>Relay contract</b> (for the lookup door): the relay receives <code>?symbol=AAPL&amp;tf=1wk</code> and returns Polygon aggregates JSON unchanged; the relay holds the Polygon key, sets the date window (free plan: 2 years of history), and caches each answer for about 12 hours — end-of-day data only changes once a day, so a whole class can share the free plan's allowance. When your Cloudflare relay goes live, paste its address above and lookup works for any stock or ETF, and for major currency pairs too (type <code>EURUSD</code>).</p>
+    <p><b>Stored daily data:</b> every lookup pulls <b>daily</b> candles once and stores them in this browser for the rest of the day. Monthly and Weekly are rebuilt from those stored dailies, so switching timeframes — or pulling the same symbol again the same day — never uses another pull (or Twelve Data credit). The line under the chart always says whether the candles were just fetched or came from storage, and when. To force a fresh pull, hold <b>Shift</b> while clicking <b>Get chart</b>.</p>
     <p><b>Data honesty:</b> free and end-of-day feeds are delayed — perfect for zones, which are drawn on closed candles. Prices are as the provider reports them; nothing here is a recommendation.</p>
   </div>
 
-  <footer>Zone Chart v0.4 · Crosshair + axis-drag scaling · Built November 5, 2026, updated November 11, 2026 · Companion to the Trend Quiz (suzel.com)</footer>
+  <footer>Zone Chart v0.5 · Stored daily lookups (one pull per symbol per day) · Built November 5, 2026, updated November 11, 2026 · Companion to the Trend Quiz (suzel.com)</footer>
 </div>
 <script>
 "use strict";
@@ -266,6 +267,7 @@ function showSeries(symbol, name, source, candles, baseTf){
   draw();
   showReadout(candles.length - 1);
   resetMark();
+  refreshLegend();
   renderZoneList();
 }
 function refreshLegend(){
@@ -280,36 +282,74 @@ function currentCandles(){
   if (state.series.baseTf === "1d" && state.tf !== "1d") return aggregate(state.series.candles, state.tf);
   return state.series.candles;
 }
-async function doLookup(){
+/* ---------- stored daily data: one pull per symbol per day ----------
+   Every lookup pulls DAILY candles once and stores them in this browser.
+   Monthly and Weekly are rebuilt from the stored daily candles, so
+   switching timeframes (or re-pulling the same symbol the same day) never
+   uses another pull. Shift+click "Get chart" forces a fresh pull. */
+function dataKey(prov, sym){ return "zc_data_" + prov + "_" + sym; }
+function readDailyCache(prov, sym){
+  try {
+    const raw = localStorage.getItem(dataKey(prov, sym));
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || !obj.candles || !obj.candles.length) return null;
+    if (new Date(obj.at).toDateString() !== new Date().toDateString()) return null;
+    return obj;
+  } catch(e){ return null; }
+}
+function writeDailyCache(prov, sym, name, candles){
+  try {
+    localStorage.setItem(dataKey(prov, sym), JSON.stringify({at: Date.now(), name: name || "", candles}));
+    const keys = [];
+    for (let i = 0; i < localStorage.length; i++){ const k = localStorage.key(i); if (k && k.indexOf("zc_data_") === 0) keys.push(k); }
+    if (keys.length > 12){
+      keys.sort((a, b) => { try { return (JSON.parse(localStorage.getItem(a)).at || 0) - (JSON.parse(localStorage.getItem(b)).at || 0); } catch(e){ return 0; } });
+      while (keys.length > 12) localStorage.removeItem(keys.shift());
+    }
+  } catch(e){ /* storage full or blocked: the on-screen series still works */ }
+}
+async function doLookup(force){
   const raw = $("symbol").value.trim();
   if (!raw) { setStatus("Type a symbol first.", true); return; }
-  const prov = $("provider").value, tf = state.tf;
-  setStatus("Fetching " + raw.toUpperCase() + " " + TF_LABEL[tf] + " candles…");
+  const sym = raw.toUpperCase();
+  const prov = $("provider").value;
+  if (!force){
+    const cached = readDailyCache(prov, sym);
+    if (cached){
+      state.rawDaily = null;
+      showSeries(sym, cached.name, (prov === "relay" ? "Your relay (Polygon)" : "Twelve Data lookup") + " · stored daily data, fetched " + new Date(cached.at).toLocaleTimeString() + " · no pull used", cached.candles, "1d");
+      return;
+    }
+  }
+  setStatus("Fetching " + sym + " daily candles — one pull covers Monthly, Weekly and Daily…");
   try {
     if (prov === "twelvedata"){
       const key = $("tdkey").value.trim() || localStorage.getItem("zc_tdkey") || "";
       if (!key) { setStatus("Paste your free Twelve Data API key first (it is kept only in this browser).", true); return; }
       localStorage.setItem("zc_tdkey", key);
       const url = "https://api.twelvedata.com/time_series?symbol=" + encodeURIComponent(tdSymbol(raw)) +
-                  "&interval=" + TD_INT[tf] + "&outputsize=" + TD_OUT[tf] + "&apikey=" + encodeURIComponent(key);
+                  "&interval=1day&outputsize=500&apikey=" + encodeURIComponent(key);
       const r = await fetch(url);
       const j = await r.json();
       const p = parseTwelveData(j);
-      if (!p.candles.length) throw new Error("No candles came back for that symbol on this timeframe.");
+      if (!p.candles.length) throw new Error("No candles came back for that symbol.");
       state.rawDaily = null;
-      showSeries(raw.toUpperCase(), p.name, "Twelve Data lookup · fetched " + new Date().toLocaleTimeString(), p.candles, tf);
+      writeDailyCache(prov, sym, p.name, p.candles);
+      showSeries(sym, p.name, "Twelve Data lookup · daily fetched " + new Date().toLocaleTimeString() + " · stored for today", p.candles, "1d");
     } else {
       const base = ($("relayurl").value.trim() || localStorage.getItem("zc_relay") || "https://zone-relay.michaeljosephsinclair.workers.dev");
       if (!base) { setStatus("Your relay is not set yet — paste its address, or use Twelve Data / CSV / the sample meanwhile.", true); return; }
       localStorage.setItem("zc_relay", base);
-      const url = base.replace(/\/?$/, "") + "/?symbol=" + encodeURIComponent(polygonSymbol(raw)) + "&tf=" + tf;
+      const url = base.replace(/\/?$/, "") + "/?symbol=" + encodeURIComponent(polygonSymbol(raw)) + "&tf=1d";
       const r = await fetch(url);
       if (!r.ok) throw new Error("Relay answered HTTP " + r.status + ".");
       const j = await r.json();
       const p = parsePolygon(j);
-      if (!p.candles.length) throw new Error("No candles came back for that symbol on this timeframe.");
+      if (!p.candles.length) throw new Error("No candles came back for that symbol.");
       state.rawDaily = null;
-      showSeries(raw.toUpperCase(), p.name, "Your relay (Polygon) · fetched " + new Date().toLocaleTimeString(), p.candles, tf);
+      writeDailyCache(prov, sym, p.name, p.candles);
+      showSeries(sym, p.name, "Your relay (Polygon) · daily fetched " + new Date().toLocaleTimeString() + " · stored for today", p.candles, "1d");
     }
   } catch (e) {
     setStatus("Lookup failed: " + e.message, true);
@@ -675,7 +715,7 @@ $("provider").addEventListener("change", () => {
   $("relayrow").classList.toggle("hidden", !relay);
   try { localStorage.setItem("zc_provider", $("provider").value); } catch(e){}
 });
-$("go").addEventListener("click", doLookup);
+$("go").addEventListener("click", e => doLookup(!!e.shiftKey));
 $("symbol").addEventListener("keydown", e => { if (e.key === "Enter") doLookup(); });
 $("csvbtn").addEventListener("click", () => $("csvfile").click());
 $("csvfile").addEventListener("change", () => {
