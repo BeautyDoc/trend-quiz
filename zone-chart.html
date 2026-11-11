@@ -63,7 +63,7 @@
   <header>
     <h1>Zone Chart</h1>
     <p class="sub">Real candles for supply &amp; demand study — the foundation build: get real price data in, draw the chart. Mark supply &amp; demand zones by hand: tap a base, get the box in Mr. Black’s colors.</p>
-    <div class="ver">Zone Chart v0.5 · Stored daily lookups · November 11, 2026</div>
+    <div class="ver">Zone Chart v0.6 · Reset view + 1-hour / 4-hour · November 11, 2026</div>
   </header>
 
   <div class="card">
@@ -73,7 +73,7 @@
       </label>
       <label class="f">Timeframe
         <span class="seg" id="tfseg">
-          <button data-tf="1mo" class="on">Monthly</button><button data-tf="1wk">Weekly</button><button data-tf="1d">Daily</button>
+          <button data-tf="1mo" class="on">Monthly</button><button data-tf="1wk">Weekly</button><button data-tf="1d">Daily</button><button data-tf="4h">4-hour</button><button data-tf="1h">1-hour</button>
         </span>
       </label>
       <label class="f">Lookup source
@@ -112,6 +112,7 @@
     <div class="row" id="zonerow">
       <button class="ghost" id="copybtn">Copy chart image</button>
       <button class="ghost" id="markbtn">Mark a zone</button>
+      <button class="ghost" id="resetview">Reset view</button>
       <span id="zonechoice" class="hidden">
         <button id="zcd">Demand zone</button>
         <button id="zcs">Supply zone</button>
@@ -139,11 +140,11 @@
     <h3>About this foundation build</h3>
     <p>This page is step one of the supply &amp; demand zones tool: real candles in, chart drawn. Two doors, one chart — type a symbol and look it up, or import a CSV of candles (from thinkorswim or anywhere else). CSV imports of <i>daily</i> candles can be viewed as Weekly or Monthly too; the page builds those bars from the dailies.</p>
     <p><b>Relay contract</b> (for the lookup door): the relay receives <code>?symbol=AAPL&amp;tf=1wk</code> and returns Polygon aggregates JSON unchanged; the relay holds the Polygon key, sets the date window (free plan: 2 years of history), and caches each answer for about 12 hours — end-of-day data only changes once a day, so a whole class can share the free plan's allowance. When your Cloudflare relay goes live, paste its address above and lookup works for any stock or ETF, and for major currency pairs too (type <code>EURUSD</code>).</p>
-    <p><b>Stored daily data:</b> every lookup pulls <b>daily</b> candles once and stores them in this browser for the rest of the day. Monthly and Weekly are rebuilt from those stored dailies, so switching timeframes — or pulling the same symbol again the same day — never uses another pull (or Twelve Data credit). The line under the chart always says whether the candles were just fetched or came from storage, and when. To force a fresh pull, hold <b>Shift</b> while clicking <b>Get chart</b>.</p>
+    <p><b>Stored daily data:</b> every lookup pulls <b>daily</b> candles once and stores them in this browser for the rest of the day. Monthly and Weekly are rebuilt from those stored dailies, so switching timeframes — or pulling the same symbol again the same day — never uses another pull (or Twelve Data credit). The line under the chart always says whether the candles were just fetched or came from storage, and when. To force a fresh pull, hold <b>Shift</b> while clicking <b>Get chart</b>. The same rule applies intraday: one stored <b>hourly</b> pull per symbol per day (Twelve Data only — the relay serves daily candles) builds both the 1-hour chart and the 4-hour chart, which is assembled from the hourly candles. The <b>Reset view</b> button returns a stretched or squeezed chart to its baseline scale.</p>
     <p><b>Data honesty:</b> free and end-of-day feeds are delayed — perfect for zones, which are drawn on closed candles. Prices are as the provider reports them; nothing here is a recommendation.</p>
   </div>
 
-  <footer>Zone Chart v0.5 · Stored daily lookups (one pull per symbol per day) · Built November 5, 2026, updated November 11, 2026 · Companion to the Trend Quiz (suzel.com)</footer>
+  <footer>Zone Chart v0.6 · Reset view + 1-hour / 4-hour timeframes · Built November 5, 2026, updated November 11, 2026 · Companion to the Trend Quiz (suzel.com)</footer>
 </div>
 <script>
 "use strict";
@@ -159,7 +160,7 @@ const state = {
   hoverY: null,        // pointer y (px) for the crosshair's horizontal line
   pScale: 1            // price-axis stretch factor from axis dragging (1 = auto)
 };
-const TF_LABEL = {"1mo":"Monthly","1wk":"Weekly","1d":"Daily"};
+const TF_LABEL = {"1mo":"Monthly","1wk":"Weekly","1d":"Daily","4h":"4-hour","1h":"1-hour"};
 const TD_OUT = {"1mo":240, "1wk":260, "1d":500};
 const TD_INT = {"1mo":"1month", "1wk":"1week", "1d":"1day"};
 
@@ -170,6 +171,7 @@ function setStatus(msg, err){
 function fmtDate(t, tf){
   const d = new Date(t);
   if (tf === "1mo") return d.toLocaleDateString("en-US",{month:"short", year:"numeric", timeZone:"UTC"});
+  if (tf === "1h" || tf === "4h") return d.toLocaleDateString("en-US",{month:"short", day:"numeric", timeZone:"UTC"}) + " " + d.toLocaleTimeString("en-US",{hour:"numeric", timeZone:"UTC"});
   return d.toLocaleDateString("en-US",{month:"short", day:"numeric", year:"numeric", timeZone:"UTC"});
 }
 function decimalsFor(candles){
@@ -189,7 +191,7 @@ function parseTwelveData(json){
   if (!json || json.status === "error") throw new Error((json && json.message) || "Twelve Data returned an error.");
   if (!Array.isArray(json.values)) throw new Error("Unexpected reply from Twelve Data.");
   const out = json.values.map(v => ({
-    t: Date.parse(v.datetime + "T00:00:00Z"),
+    t: Date.parse(v.datetime.indexOf(" ") >= 0 ? v.datetime.replace(" ", "T") + "Z" : v.datetime + "T00:00:00Z"),
     o: parseFloat(v.open), h: parseFloat(v.high), l: parseFloat(v.low), c: parseFloat(v.close),
     v: v.volume ? parseFloat(v.volume) : 0
   })).filter(k => isFinite(k.c));
@@ -277,9 +279,21 @@ function refreshLegend(){
   if (!nm || !candles.length) return;
   nm.textContent = (state.series.name ? state.series.name + " · " : "") + TF_LABEL[state.tf] + " · " + candles.length + " candles · " + fmtDate(candles[0].t, state.tf) + " – " + fmtDate(candles[candles.length-1].t, state.tf);
 }
+function aggregate4h(candles){
+  /* 4-hour bars built from hourly bars: groups of up to 4 consecutive hours within each day */
+  const out = []; let cur = null, curDay = null, n = 0;
+  for (const k of candles){
+    const day = Math.floor(k.t / 86400000);
+    if (!cur || day !== curDay || n >= 4){ cur = {t: k.t, o: k.o, h: k.h, l: k.l, c: k.c, v: k.v}; out.push(cur); curDay = day; n = 1; }
+    else { cur.h = Math.max(cur.h, k.h); cur.l = Math.min(cur.l, k.l); cur.c = k.c; cur.v += k.v; n++; }
+  }
+  return out;
+}
 function currentCandles(){
   if (!state.series) return [];
-  if (state.series.baseTf === "1d" && state.tf !== "1d") return aggregate(state.series.candles, state.tf);
+  const b = state.series.baseTf;
+  if (b === "1d" && state.tf !== "1d" && state.tf !== "1h" && state.tf !== "4h") return aggregate(state.series.candles, state.tf);
+  if (b === "1h" && state.tf === "4h") return aggregate4h(state.series.candles);
   return state.series.candles;
 }
 /* ---------- stored daily data: one pull per symbol per day ----------
@@ -287,10 +301,10 @@ function currentCandles(){
    Monthly and Weekly are rebuilt from the stored daily candles, so
    switching timeframes (or re-pulling the same symbol the same day) never
    uses another pull. Shift+click "Get chart" forces a fresh pull. */
-function dataKey(prov, sym){ return "zc_data_" + prov + "_" + sym; }
-function readDailyCache(prov, sym){
+function dataKey(kind, prov, sym){ return kind ? "zc_data_" + kind + "_" + prov + "_" + sym : "zc_data_" + prov + "_" + sym; }
+function readDailyCache(kind, prov, sym){
   try {
-    const raw = localStorage.getItem(dataKey(prov, sym));
+    const raw = localStorage.getItem(dataKey(kind, prov, sym));
     if (!raw) return null;
     const obj = JSON.parse(raw);
     if (!obj || !obj.candles || !obj.candles.length) return null;
@@ -298,9 +312,9 @@ function readDailyCache(prov, sym){
     return obj;
   } catch(e){ return null; }
 }
-function writeDailyCache(prov, sym, name, candles){
+function writeDailyCache(kind, prov, sym, name, candles){
   try {
-    localStorage.setItem(dataKey(prov, sym), JSON.stringify({at: Date.now(), name: name || "", candles}));
+    localStorage.setItem(dataKey(kind, prov, sym), JSON.stringify({at: Date.now(), name: name || "", candles}));
     const keys = [];
     for (let i = 0; i < localStorage.length; i++){ const k = localStorage.key(i); if (k && k.indexOf("zc_data_") === 0) keys.push(k); }
     if (keys.length > 12){
@@ -315,7 +329,7 @@ async function doLookup(force){
   const sym = raw.toUpperCase();
   const prov = $("provider").value;
   if (!force){
-    const cached = readDailyCache(prov, sym);
+    const cached = readDailyCache("", prov, sym);
     if (cached){
       state.rawDaily = null;
       showSeries(sym, cached.name, (prov === "relay" ? "Your relay (Polygon)" : "Twelve Data lookup") + " · stored daily data, fetched " + new Date(cached.at).toLocaleTimeString() + " · no pull used", cached.candles, "1d");
@@ -335,7 +349,7 @@ async function doLookup(force){
       const p = parseTwelveData(j);
       if (!p.candles.length) throw new Error("No candles came back for that symbol.");
       state.rawDaily = null;
-      writeDailyCache(prov, sym, p.name, p.candles);
+      writeDailyCache("", prov, sym, p.name, p.candles);
       showSeries(sym, p.name, "Twelve Data lookup · daily fetched " + new Date().toLocaleTimeString() + " · stored for today", p.candles, "1d");
     } else {
       const base = ($("relayurl").value.trim() || localStorage.getItem("zc_relay") || "https://zone-relay.michaeljosephsinclair.workers.dev");
@@ -348,12 +362,50 @@ async function doLookup(force){
       const p = parsePolygon(j);
       if (!p.candles.length) throw new Error("No candles came back for that symbol.");
       state.rawDaily = null;
-      writeDailyCache(prov, sym, p.name, p.candles);
+      writeDailyCache("", prov, sym, p.name, p.candles);
       showSeries(sym, p.name, "Your relay (Polygon) · daily fetched " + new Date().toLocaleTimeString() + " · stored for today", p.candles, "1d");
     }
   } catch (e) {
     setStatus("Lookup failed: " + e.message, true);
   }
+}
+async function doIntradayLookup(force){
+  const raw = $("symbol").value.trim();
+  if (!raw) { setStatus("Type a symbol first.", true); return; }
+  const sym = raw.toUpperCase();
+  if ($("provider").value !== "twelvedata"){
+    setStatus("1-hour and 4-hour candles come from Twelve Data — switch the Lookup source to Twelve Data (your relay serves daily candles only).", true);
+    return;
+  }
+  if (!force){
+    const cached = readDailyCache("1h", "twelvedata", sym);
+    if (cached){
+      state.rawDaily = null;
+      showSeries(sym, cached.name, "Twelve Data lookup · stored hourly data, fetched " + new Date(cached.at).toLocaleTimeString() + " · no pull used", cached.candles, "1h");
+      return;
+    }
+  }
+  const key = $("tdkey").value.trim() || localStorage.getItem("zc_tdkey") || "";
+  if (!key) { setStatus("Paste your free Twelve Data API key first (it is kept only in this browser).", true); return; }
+  localStorage.setItem("zc_tdkey", key);
+  setStatus("Fetching " + sym + " hourly candles from Twelve Data — one pull covers 1-hour and 4-hour…");
+  try {
+    const url = "https://api.twelvedata.com/time_series?symbol=" + encodeURIComponent(tdSymbol(raw)) +
+                "&interval=1h&outputsize=1000&apikey=" + encodeURIComponent(key);
+    const r = await fetch(url);
+    const j = await r.json();
+    const p = parseTwelveData(j);
+    if (!p.candles.length) throw new Error("No hourly candles came back for that symbol.");
+    state.rawDaily = null;
+    writeDailyCache("1h", "twelvedata", sym, p.name, p.candles);
+    showSeries(sym, p.name, "Twelve Data lookup · hourly fetched " + new Date().toLocaleTimeString() + " · stored for today", p.candles, "1h");
+  } catch (e) {
+    setStatus("Lookup failed: " + e.message, true);
+  }
+}
+function lookupCurrent(force){
+  if (state.tf === "1h" || state.tf === "4h") doIntradayLookup(force);
+  else doLookup(force);
 }
 function loadCSVText(text, origin){
   try {
@@ -704,8 +756,17 @@ $("tfseg").addEventListener("click", e => {
   state.tf = b.dataset.tf;
   resetMark();
   if (!state.series) { renderZoneList(); return; }
-  if (state.series.source.startsWith("Built-in sample")) loadSample();
-  else if (state.series.baseTf === "1d") { draw(); showReadout(currentCandles().length - 1); refreshLegend(); renderZoneList(); }
+  const intra = state.tf === "1h" || state.tf === "4h";
+  if (state.series.source.startsWith("Built-in sample")){
+    if (intra){ setStatus("The built-in sample holds Monthly, Weekly and Daily candles only — look up a symbol with Twelve Data for 1-hour and 4-hour.", true); return; }
+    loadSample();
+  }
+  else if (intra){
+    if (state.series.baseTf === "1h") { draw(); showReadout(currentCandles().length - 1); refreshLegend(); renderZoneList(); }
+    else if (state.series.symbol !== "CSV import") doIntradayLookup();
+    else setStatus("This CSV holds " + TF_LABEL[state.series.baseTf] + " candles — 1-hour and 4-hour need a Twelve Data lookup.", true);
+  }
+  else if (state.series.baseTf === "1d" || state.series.baseTf === state.tf) { draw(); showReadout(currentCandles().length - 1); refreshLegend(); renderZoneList(); }
   else if (state.series.symbol !== "CSV import") doLookup();
   else { draw(); showReadout(currentCandles().length - 1); refreshLegend(); renderZoneList(); }
 });
@@ -715,8 +776,8 @@ $("provider").addEventListener("change", () => {
   $("relayrow").classList.toggle("hidden", !relay);
   try { localStorage.setItem("zc_provider", $("provider").value); } catch(e){}
 });
-$("go").addEventListener("click", e => doLookup(!!e.shiftKey));
-$("symbol").addEventListener("keydown", e => { if (e.key === "Enter") doLookup(); });
+$("go").addEventListener("click", e => lookupCurrent(!!e.shiftKey));
+$("symbol").addEventListener("keydown", e => { if (e.key === "Enter") lookupCurrent(false); });
 $("csvbtn").addEventListener("click", () => $("csvfile").click());
 $("csvfile").addEventListener("change", () => {
   const f = $("csvfile").files[0]; if (!f) return;
@@ -742,6 +803,13 @@ $("zcs").addEventListener("click", () => createZone("supply"));
 $("zccancel").addEventListener("click", () => { resetMark(); draw(); });
 $("zclear").addEventListener("click", () => { writeZones([]); renderZoneList(); draw(); setStatus("Zones cleared for this symbol and timeframe."); });
 $("copybtn").addEventListener("click", copyChartImage);
+$("resetview").addEventListener("click", () => {
+  state.pScale = 1;
+  $("viewcount").value = 120;
+  $("viewcountval").textContent = "120";
+  draw();
+  setStatus("View reset — price axis and candle count back to baseline.");
+});
 window.addEventListener("resize", draw);
 $("tdkey").value = localStorage.getItem("zc_tdkey") || "";
 $("relayurl").value = localStorage.getItem("zc_relay") || "https://zone-relay.michaeljosephsinclair.workers.dev";
