@@ -63,7 +63,7 @@
   <header>
     <h1>Zone Chart</h1>
     <p class="sub">Real candles for supply &amp; demand study — the foundation build: get real price data in, draw the chart. Mark supply &amp; demand zones by hand: tap a base, get the box in Mr. Black’s colors.</p>
-    <div class="ver">Zone Chart v0.3 · Zones + copy chart image · November 5, 2026</div>
+    <div class="ver">Zone Chart v0.4 · Crosshair + axis-drag scaling · November 11, 2026</div>
   </header>
 
   <div class="card">
@@ -78,19 +78,19 @@
       </label>
       <label class="f">Lookup source
         <select id="provider">
-          <option value="twelvedata">Twelve Data (needs a free key)</option>
           <option value="relay">My relay (Polygon)</option>
+          <option value="twelvedata">Twelve Data (needs a free key)</option>
         </select>
       </label>
       <span style="align-self:flex-end"><button id="go">Get chart</button></span>
     </div>
-    <div class="row" id="tdkeyrow">
+    <div class="row hidden" id="tdkeyrow">
       <label class="f">Twelve Data API key
         <input type="password" id="tdkey" placeholder="paste your key — kept only in this browser" autocomplete="off">
       </label>
       <span class="hint">Free key: sign up at twelvedata.com (Basic plan, free) and copy the API key from your dashboard. It never leaves this browser except to Twelve Data itself.</span>
     </div>
-    <div class="row hidden" id="relayrow">
+    <div class="row" id="relayrow">
       <label class="f">Relay address
         <input type="text" id="relayurl" placeholder="https://your-relay.example/" autocomplete="off" spellcheck="false">
       </label>
@@ -105,6 +105,9 @@
         <input type="range" id="viewcount" min="30" max="300" step="10" value="120">
         <span id="viewcountval">120</span>
       </label>
+    </div>
+    <div class="row">
+      <span class="hint">Crosshair: move your pointer over the chart — the blue tag on the price axis reads the exact price at the horizontal line. Drag the <b>price axis</b> (right edge) up or down to stretch or squish the chart vertically; drag the <b>date axis</b> (bottom edge) left or right to spread or squeeze the candles. Double-click an axis to reset it.</span>
     </div>
     <div class="row" id="zonerow">
       <button class="ghost" id="copybtn">Copy chart image</button>
@@ -139,7 +142,7 @@
     <p><b>Data honesty:</b> free and end-of-day feeds are delayed — perfect for zones, which are drawn on closed candles. Prices are as the provider reports them; nothing here is a recommendation.</p>
   </div>
 
-  <footer>Zone Chart v0.3 · Zones + copy chart image · Built November 5, 2026 · Companion to the Trend Quiz (suzel.com)</footer>
+  <footer>Zone Chart v0.4 · Crosshair + axis-drag scaling · Built November 5, 2026, updated November 11, 2026 · Companion to the Trend Quiz (suzel.com)</footer>
 </div>
 <script>
 "use strict";
@@ -151,7 +154,9 @@ const state = {
   tf: "1mo",
   series: null,        // {symbol, name, source, candles:[{t,o,h,l,c,v}], baseTf}
   rawDaily: null,      // for CSV aggregation
-  hover: -1
+  hover: -1,
+  hoverY: null,        // pointer y (px) for the crosshair's horizontal line
+  pScale: 1            // price-axis stretch factor from axis dragging (1 = auto)
 };
 const TF_LABEL = {"1mo":"Monthly","1wk":"Weekly","1d":"Daily"};
 const TD_OUT = {"1mo":240, "1wk":260, "1d":500};
@@ -249,6 +254,8 @@ function polygonSymbol(s){ s = s.trim().toUpperCase(); return /^[A-Z]{6}$/.test(
 function showSeries(symbol, name, source, candles, baseTf){
   state.series = {symbol, name, source, candles, baseTf};
   state.hover = -1;
+  state.hoverY = null;
+  state.pScale = 1;
   const first = candles[0], last = candles[candles.length-1];
   $("legend").innerHTML = "";
   $("legend").append(document.createTextNode(symbol + " "));
@@ -340,6 +347,10 @@ function draw(){
   let lo = Infinity, hi = -Infinity;
   for (const k of vis){ lo = Math.min(lo, k.l); hi = Math.max(hi, k.h); }
   const pad = (hi - lo) * 0.07 || 1; hi += pad; lo -= pad;
+  if (state.pScale && state.pScale !== 1){
+    const mid = (hi + lo) / 2, half = (hi - lo) / 2 * state.pScale;
+    hi = mid + half; lo = mid - half;
+  }
   const dec = decimalsFor(vis);
   const y = p => padT + (hi - p) / (hi - lo) * plotH;
   const step = plotW / vis.length;
@@ -401,13 +412,23 @@ function draw(){
       ctx.lineWidth = 1;
     }
   }
-  /* hover marker */
+  /* crosshair: vertical line on the hovered candle + horizontal line at the
+     pointer's height, with that price tagged on the price axis */
   if (state.hover >= 0 && state.hover < vis.length){
     const i = state.hover;
     ctx.strokeStyle = "#2563eb";
     ctx.beginPath(); ctx.moveTo(x(i), padT); ctx.lineTo(x(i), padT + plotH); ctx.stroke();
+    if (state.hoverY !== null && state.hoverY !== undefined){
+      const hy = Math.max(padT, Math.min(padT + plotH, state.hoverY));
+      ctx.beginPath(); ctx.moveTo(padL, hy); ctx.lineTo(padL + plotW, hy); ctx.stroke();
+      const p = hi - (hy - padT) / plotH * (hi - lo);
+      ctx.fillStyle = "#2563eb";
+      ctx.fillRect(padL + plotW + 1, hy - 8, padR - 2, 16);
+      ctx.fillStyle = "#ffffff"; ctx.font = "11px system-ui";
+      ctx.fillText(p.toFixed(dec), padL + plotW + 6, hy + 4);
+    }
   }
-  viewGeom = {vis, padL, padT, plotW, plotH, step, offset: candlesAll.length - vis.length};
+  viewGeom = {vis, padL, padT, plotW, plotH, step, offset: candlesAll.length - vis.length, lo, hi, padR, padB};
 }
 function showReadout(absIdx){
   const candlesAll = state.series ? currentCandles() : [];
@@ -424,15 +445,72 @@ function showReadout(absIdx){
   $("readout").textContent = parts.join("   ·   ") + (k.v ? "   ·   Vol " + Intl.NumberFormat().format(k.v) : "");
 }
 function pointerPos(evt){
-  if (!viewGeom) return;
+  if (!viewGeom || axisDrag) return;
   const r = cv.getBoundingClientRect();
-  const cx = (evt.touches ? evt.touches[0].clientX : evt.clientX) - r.left;
+  const src = evt.touches ? evt.touches[0] : evt;
+  const cx = src.clientX - r.left;
+  const cy = src.clientY - r.top;
+  state.hoverY = cy;
+  /* cursor shape hints at the axis-drag zones */
+  const g = viewGeom;
+  cv.style.cursor = (cx > g.padL + g.plotW) ? "ns-resize" : (cy > g.padT + g.plotH ? "ew-resize" : (markMode ? "pointer" : "crosshair"));
   const i = Math.floor((cx - viewGeom.padL) / viewGeom.step);
   if (i >= 0 && i < viewGeom.vis.length){
+    if (i !== state.hover) showReadout(viewGeom.offset + i);
     state.hover = i;
-    showReadout(viewGeom.offset + i);
+    draw();
+  } else {
     draw();
   }
+}
+
+/* ============================== axis dragging ==============================
+   Drag on the price axis (right strip) stretches/squishes the chart
+   vertically; drag on the date axis (bottom strip) spreads/squeezes the
+   candles horizontally. Double-click an axis to reset it. */
+let axisDrag = null, suppressClick = false;
+function axisDown(evt){
+  if (!viewGeom) return;
+  const r = cv.getBoundingClientRect();
+  const src = evt.touches ? evt.touches[0] : evt;
+  const cx = src.clientX - r.left, cy = src.clientY - r.top;
+  const g = viewGeom;
+  if (cx > g.padL + g.plotW && cy >= g.padT && cy <= g.padT + g.plotH){
+    axisDrag = {kind: "price", startY: cy, startScale: state.pScale || 1, moved: false};
+  } else if (cy > g.padT + g.plotH && cx >= g.padL && cx <= g.padL + g.plotW){
+    axisDrag = {kind: "date", startX: cx, startWant: parseInt($("viewcount").value, 10), step: g.step, moved: false};
+  }
+  if (axisDrag && evt.cancelable) evt.preventDefault();
+}
+function axisMove(evt){
+  if (!axisDrag) return;
+  const r = cv.getBoundingClientRect();
+  const src = evt.touches ? evt.touches[0] : evt;
+  const cx = src.clientX - r.left, cy = src.clientY - r.top;
+  if (axisDrag.kind === "price"){
+    const dy = cy - axisDrag.startY;
+    if (Math.abs(dy) > 3) axisDrag.moved = true;
+    state.pScale = Math.min(4, Math.max(0.25, axisDrag.startScale * Math.exp(dy * 0.005)));
+  } else {
+    const dx = cx - axisDrag.startX;
+    if (Math.abs(dx) > 3) axisDrag.moved = true;
+    const want = Math.min(300, Math.max(30, Math.round(axisDrag.startWant - dx / Math.max(2, axisDrag.step))));
+    $("viewcount").value = want;
+    $("viewcountval").textContent = want;
+  }
+  draw();
+}
+function axisUp(){
+  if (axisDrag && axisDrag.moved) suppressClick = true;
+  axisDrag = null;
+}
+function axisDblClick(evt){
+  if (!viewGeom) return;
+  const r = cv.getBoundingClientRect();
+  const cx = evt.clientX - r.left, cy = evt.clientY - r.top;
+  const g = viewGeom;
+  if (cx > g.padL + g.plotW){ state.pScale = 1; draw(); }
+  else if (cy > g.padT + g.plotH){ $("viewcount").value = 120; $("viewcountval").textContent = "120"; draw(); }
 }
 
 /* ============================== zones ============================== */
@@ -474,6 +552,7 @@ function updateZoneUI(){
   else hint.textContent = "Base selected (" + (markB - markA + 1) + " candles). Did price leave this base upward, or downward?";
 }
 function chartClick(evt){
+  if (suppressClick) { suppressClick = false; return; }
   if (!markMode || !viewGeom) return;
   const r = cv.getBoundingClientRect();
   const cx = (evt.touches ? evt.touches[0].clientX : evt.clientX) - r.left;
@@ -587,6 +666,7 @@ $("provider").addEventListener("change", () => {
   const relay = $("provider").value === "relay";
   $("tdkeyrow").classList.toggle("hidden", relay);
   $("relayrow").classList.toggle("hidden", !relay);
+  try { localStorage.setItem("zc_provider", $("provider").value); } catch(e){}
 });
 $("go").addEventListener("click", doLookup);
 $("symbol").addEventListener("keydown", e => { if (e.key === "Enter") doLookup(); });
@@ -600,7 +680,14 @@ $("pastego").addEventListener("click", () => loadCSVText($("pastebox").value, "P
 $("samplebtn").addEventListener("click", loadSample);
 $("viewcount").addEventListener("input", () => { $("viewcountval").textContent = $("viewcount").value; draw(); });
 cv.addEventListener("mousemove", pointerPos);
+cv.addEventListener("mousedown", axisDown);
+cv.addEventListener("mousemove", axisMove);
+window.addEventListener("mouseup", axisUp);
+cv.addEventListener("dblclick", axisDblClick);
+cv.addEventListener("mouseleave", () => { state.hover = -1; state.hoverY = null; draw(); });
 cv.addEventListener("touchstart", pointerPos, {passive:true});
+cv.addEventListener("touchstart", axisDown, {passive:false});
+cv.addEventListener("touchmove", axisMove, {passive:true});
 cv.addEventListener("click", chartClick);
 $("markbtn").addEventListener("click", () => setMarkMode(!markMode));
 $("zcd").addEventListener("click", () => createZone("demand"));
@@ -611,6 +698,15 @@ $("copybtn").addEventListener("click", copyChartImage);
 window.addEventListener("resize", draw);
 $("tdkey").value = localStorage.getItem("zc_tdkey") || "";
 $("relayurl").value = localStorage.getItem("zc_relay") || "https://zone-relay.michaeljosephsinclair.workers.dev";
+/* lookup source: default to the relay; remember the last source used */
+(function(){
+  let saved = "relay";
+  try { saved = localStorage.getItem("zc_provider") || "relay"; } catch(e){}
+  if (saved !== "relay" && saved !== "twelvedata") saved = "relay";
+  $("provider").value = saved;
+  $("tdkeyrow").classList.toggle("hidden", saved === "relay");
+  $("relayrow").classList.toggle("hidden", saved !== "relay");
+})();
 loadSample();
 </script>
 </body>
