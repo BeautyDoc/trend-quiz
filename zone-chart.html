@@ -63,7 +63,7 @@
   <header>
     <h1>Zone Chart</h1>
     <p class="sub">Real candles for supply &amp; demand study — the foundation build: get real price data in, draw the chart. Mark supply &amp; demand zones by hand: tap a base, get the box in Mr. Black’s colors.</p>
-    <div class="ver">Zone Chart v0.6 · Reset view + 1-hour / 4-hour · November 11, 2026</div>
+    <div class="ver">Zone Chart v0.7 · Segments + trend labels (Phase 1) · November 11, 2026</div>
   </header>
 
   <div class="card">
@@ -109,6 +109,12 @@
     <div class="row">
       <span class="hint">Crosshair: move your pointer over the chart — the blue tag on the price axis reads the exact price at the horizontal line. Drag the <b>price axis</b> (right edge) up or down to stretch or squish the chart vertically; drag the <b>date axis</b> (bottom edge) left or right to spread or squeeze the candles. Double-click an axis to reset it.</span>
     </div>
+    <div class="row">
+      <span class="hint">Overlays:</span>
+      <label style="font-size:13px"><input type="checkbox" id="ovseg"> Segments</label>
+      <label style="font-size:13px"><input type="checkbox" id="ovtrend"> Trend labels</label>
+      <span class="hint">The course's segment swings and trend state (uptrend / downtrend / consolidation) — bodies only, computed as of each candle's close.</span>
+    </div>
     <div class="row" id="zonerow">
       <button class="ghost" id="copybtn">Copy chart image</button>
       <button class="ghost" id="markbtn">Mark a zone</button>
@@ -141,10 +147,11 @@
     <p>This page is step one of the supply &amp; demand zones tool: real candles in, chart drawn. Two doors, one chart — type a symbol and look it up, or import a CSV of candles (from thinkorswim or anywhere else). CSV imports of <i>daily</i> candles can be viewed as Weekly or Monthly too; the page builds those bars from the dailies.</p>
     <p><b>Relay contract</b> (for the lookup door): the relay receives <code>?symbol=AAPL&amp;tf=1wk</code> and returns Polygon aggregates JSON unchanged; the relay holds the Polygon key, sets the date window (free plan: 2 years of history), and caches each answer for about 12 hours — end-of-day data only changes once a day, so a whole class can share the free plan's allowance. When your Cloudflare relay goes live, paste its address above and lookup works for any stock or ETF, and for major currency pairs too (type <code>EURUSD</code>).</p>
     <p><b>Stored daily data:</b> every lookup pulls <b>daily</b> candles once and stores them in this browser for the rest of the day. Monthly and Weekly are rebuilt from those stored dailies, so switching timeframes — or pulling the same symbol again the same day — never uses another pull (or Twelve Data credit). The line under the chart always says whether the candles were just fetched or came from storage, and when. To force a fresh pull, hold <b>Shift</b> while clicking <b>Get chart</b>. The same rule applies intraday: one stored <b>hourly</b> pull per symbol per day (Twelve Data only — the relay serves daily candles) builds both the 1-hour chart and the 4-hour chart, which is assembled from the hourly candles. The <b>Reset view</b> button returns a stretched or squeezed chart to its baseline scale.</p>
+    <p><b>Segments &amp; trend overlays:</b> the <b>Segments</b> toggle draws the course's segment swings — blue up, orange down, dashed while a segment is still forming (a segment completes only when a counter-direction candle closes; a single counter candle is a whole segment). The <b>Trend labels</b> toggle paints the trend state along the top of the chart and adds it to the readout line: green uptrend, red downtrend, gray consolidation. The engine follows the settled rulebook — bodies only, never wicks; a counter-trend gap is a segment by itself, extreme at the gap price; a trend needs the three-segment zigzag whose third segment crosses the first segment's extreme, and it ends on a candle close past the far control point. Everything is computed as of each candle's close: no look-ahead.</p>
     <p><b>Data honesty:</b> free and end-of-day feeds are delayed — perfect for zones, which are drawn on closed candles. Prices are as the provider reports them; nothing here is a recommendation.</p>
   </div>
 
-  <footer>Zone Chart v0.6 · Reset view + 1-hour / 4-hour timeframes · Built November 5, 2026, updated November 11, 2026 · Companion to the Trend Quiz (suzel.com)</footer>
+  <footer>Zone Chart v0.7 · Segments + trend labels (Phase 1 overlays) · Built November 5, 2026, updated November 11, 2026 · Companion to the Trend Quiz (suzel.com)</footer>
 </div>
 <script>
 "use strict";
@@ -511,6 +518,8 @@ function draw(){
       ctx.lineWidth = 1;
     }
   }
+  /* Phase 1 overlays: segment swings + trend state band */
+  if ((ovSeg || ovTrend) && candlesAll.length) drawTrendOverlay(candlesAll, vis, x, y, padL, padT, plotW);
   /* crosshair: vertical line on the hovered candle + horizontal line at the
      pointer's height, with that price tagged on the price axis */
   if (state.hover >= 0 && state.hover < vis.length){
@@ -541,7 +550,8 @@ function showReadout(absIdx){
     "O " + k.o.toFixed(dec), "H " + k.h.toFixed(dec), "L " + k.l.toFixed(dec), "C " + k.c.toFixed(dec),
     (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"
   ];
-  $("readout").textContent = parts.join("   ·   ") + (k.v ? "   ·   Vol " + Intl.NumberFormat().format(k.v) : "");
+  $("readout").textContent = parts.join("   ·   ") + (k.v ? "   ·   Vol " + Intl.NumberFormat().format(k.v) : "") +
+    (ovTrend ? "   ·   Trend: " + ({up: "Uptrend", down: "Downtrend", cons: "Consolidation"})[trendFor(candlesAll).states[absIdx]] : "");
 }
 function pointerPos(evt){
   if (!viewGeom || axisDrag) return;
@@ -610,6 +620,185 @@ function axisDblClick(evt){
   const g = viewGeom;
   if (cx > g.padL + g.plotW){ state.pScale = 1; draw(); }
   else if (cy > g.padT + g.plotH){ $("viewcount").value = 120; $("viewcountval").textContent = "120"; draw(); }
+}
+
+/* ============================== TREND ENGINE ==============================
+   The settled Trade Phantoms segment/trend rules (Michael's rulebook):
+   - Direction and extremes use candle BODIES (open/close), never wicks.
+   - A segment is a run of same-direction candles; it completes only when a
+     counter-direction candle CLOSES after it. A single counter candle is a
+     whole segment by itself.
+   - A gap against the segment's direction is a segment by itself, extreme at
+     the gap price (the creating candle's open); a gap crossing the far
+     control breaks the trend at the gap. A with-direction gap splits nothing.
+   - A trend is a three-segment ZIGZAG (impulse, correction, impulse) whose
+     third segment crosses the first segment's extreme; the third may still
+     be active when the trend is called.
+   - Controls: near = the latest impulse extreme (HH/LL); far = the extreme
+     of the correction that launched the leg (HL/LH). Both relocate together
+     when the trend extends.
+   - A candle CLOSE past the far control breaks the trend (consolidation).
+     While a trend is active a new one needs the break first, then a fresh
+     zigzag counted from the old trend's final extreme; if the break close
+     and the new zigzag's cross land on the same candle, the trend flips there.
+   computeTrend returns {segments, states, events}; states[i] is the trend
+   in force after candle i closes: "up" | "down" | "cons". No look-ahead:
+   everything at index i is computed from candles up to i only. */
+/* TREND ENGINE START */
+function computeTrend(candles){
+  const n = candles.length;
+  const states = new Array(n).fill("cons");
+  const segments = [];
+  const events = [];
+  if (!n) return {segments, states, events};
+  const bodyTop = k => Math.max(k.o, k.c);
+  const bodyBot = k => Math.min(k.o, k.c);
+  const dirOf = k => k.c > k.o ? 1 : (k.c < k.o ? -1 : 0);
+
+  let cur = null, pendingStart = -1;
+  function startSeg(i, dir, ext, gap){
+    cur = {start: pendingStart >= 0 ? pendingStart : i, end: i, dir, ext, extIdx: i, gap: !!gap, complete: false};
+    pendingStart = -1;
+    segments.push(cur);
+  }
+  function extendSeg(i, k){
+    cur.end = i;
+    if (cur.dir === 1){ const v = bodyTop(k); if (v > cur.ext){ cur.ext = v; cur.extIdx = i; } }
+    else { const v = bodyBot(k); if (v < cur.ext){ cur.ext = v; cur.extIdx = i; } }
+  }
+
+  let trend = null;            // {dir, near, far}
+  let baseSegIdx = 0;          // first segment index that counts toward a new zigzag
+  let lastImpulseSegIdx = -1;  // segment that most recently set the near control
+
+  function evaluate(idx){
+    const k = candles[idx];
+    if (trend){
+      const broke = trend.dir === 1 ? (k.c < trend.far || k.o < trend.far) : (k.c > trend.far || k.o > trend.far);
+      if (broke){
+        events.push({idx, kind: "break"});
+        trend = null;
+        baseSegIdx = lastImpulseSegIdx + 1;
+      }
+    }
+    if (trend){
+      const li = segments.length - 1, s = segments[li];
+      if (s && s.dir === trend.dir && (trend.dir === 1 ? s.ext > trend.near : s.ext < trend.near)){
+        trend.near = s.ext;
+        for (let j = li - 1; j >= 0; j--){ if (segments[j].dir === -trend.dir){ trend.far = segments[j].ext; break; } }
+        lastImpulseSegIdx = li;
+      }
+      return;
+    }
+    /* no active trend: scan consecutive triples from baseSegIdx for a zigzag */
+    for (let j = Math.max(0, baseSegIdx); j + 2 < segments.length; j++){
+      const s1 = segments[j], s2 = segments[j + 1], s3 = segments[j + 2];
+      if (!s1 || !s2 || !s3) break;
+      if (s1.dir !== s3.dir || s2.dir === s1.dir) continue;
+      const crossed = s1.dir === 1 ? s3.ext > s1.ext : s3.ext < s1.ext;
+      if (crossed){
+        trend = {dir: s1.dir, near: s3.ext, far: s2.ext};
+        lastImpulseSegIdx = j + 2;
+        events.push({idx, kind: s1.dir === 1 ? "up" : "down"});
+        break;
+      }
+    }
+  }
+
+  for (let i = 0; i < n; i++){
+    const k = candles[i], d = dirOf(k);
+    /* gap against the running segment's direction = a segment by itself */
+    if (i > 0 && cur){
+      const gap = k.o - candles[i - 1].c;
+      if (Math.abs(gap) > 1e-9 && Math.sign(gap) !== cur.dir){
+        cur.complete = true;
+        segments.push({start: i, end: i, dir: Math.sign(gap), ext: k.o, extIdx: i, gap: true, complete: true});
+        cur = segments[segments.length - 1];
+        /* the creating candle's body is the next segment (the gap segment
+           keeps its extreme at the gap price, per the rulebook) */
+        if (d !== 0){
+          cur = {start: i, end: i, dir: d, ext: d === 1 ? bodyTop(k) : bodyBot(k), extIdx: i, gap: false, complete: false};
+          segments.push(cur);
+        }
+      } else if (d === 0){
+        extendSeg(i, k);
+      } else if (d === cur.dir){
+        extendSeg(i, k);
+      } else {
+        cur.complete = true;
+        startSeg(i, d, d === 1 ? bodyTop(k) : bodyBot(k), false);
+      }
+    } else if (!cur){
+      if (d === 0){ pendingStart = pendingStart >= 0 ? pendingStart : i; }
+      else startSeg(i, d, d === 1 ? bodyTop(k) : bodyBot(k), false);
+    }
+    evaluate(i);
+    states[i] = trend ? (trend.dir === 1 ? "up" : "down") : "cons";
+  }
+  return {segments, states, events};
+}
+/* TREND ENGINE END */
+
+let trendCache = null;
+function trendFor(candlesAll){
+  const key = candlesAll.length + ":" + (candlesAll.length ? candlesAll[candlesAll.length - 1].t : 0) + ":" + (state.series ? state.series.symbol + "|" + state.tf : "");
+  if (trendCache && trendCache.key === key) return trendCache.res;
+  const res = computeTrend(candlesAll);
+  trendCache = {key, res};
+  return res;
+}
+function drawTrendOverlay(candlesAll, vis, x, y, padL, padT, plotW){
+  const T = trendFor(candlesAll);
+  const off = candlesAll.length - vis.length;
+  const stepW = plotW / vis.length;
+  if (ovTrend){
+    const bh = 10;
+    let runStart = 0;
+    for (let vi = 1; vi <= vis.length; vi++){
+      const prev = T.states[off + runStart];
+      const st = vi < vis.length ? T.states[off + vi] : null;
+      if (st !== prev || vi === vis.length){
+        const x0 = padL + stepW * runStart, x1 = padL + stepW * vi;
+        ctx.fillStyle = prev === "up" ? "#2e7d32" : prev === "down" ? "#c62828" : "#d1d5db";
+        ctx.fillRect(x0, padT, Math.max(1, x1 - x0), bh);
+        if (x1 - x0 > 80){
+          ctx.fillStyle = prev === "up" ? "#2e7d32" : prev === "down" ? "#c62828" : "#6b7280";
+          ctx.font = "9px system-ui";
+          ctx.fillText(prev === "up" ? "UPTREND" : prev === "down" ? "DOWNTREND" : "CONSOLIDATION", x0 + 2, padT + bh + 9);
+        }
+        runStart = vi;
+      }
+    }
+  }
+  if (ovSeg){
+    const segs = T.segments;
+    if (segs.length){
+      const verts = [];
+      const k0 = candlesAll[segs[0].start];
+      verts.push({i: segs[0].start, p: segs[0].dir === 1 ? Math.min(k0.o, k0.c) : Math.max(k0.o, k0.c)});
+      for (const s of segs) verts.push({i: s.extIdx, p: s.ext});
+      for (let j = 1; j < verts.length; j++){
+        const a = verts[j - 1], b = verts[j], seg = segs[j - 1];
+        const vai = a.i - off, vbi = b.i - off;
+        if (vbi < 0 || vai >= vis.length) continue;
+        ctx.strokeStyle = seg.dir === 1 ? "#2563eb" : "#ea580c";
+        ctx.lineWidth = 2;
+        ctx.setLineDash(seg.complete ? [] : [5, 4]);
+        ctx.beginPath();
+        ctx.moveTo(x(Math.max(0, vai)), y(a.p));
+        ctx.lineTo(x(Math.min(vis.length - 1, vbi)), y(b.p));
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.lineWidth = 1;
+      }
+      for (const s of segs){
+        const vi = s.extIdx - off;
+        if (vi < 0 || vi >= vis.length) continue;
+        ctx.fillStyle = s.dir === 1 ? "#2563eb" : "#ea580c";
+        ctx.beginPath(); ctx.arc(x(vi), y(s.ext), 2.5, 0, Math.PI * 2); ctx.fill();
+      }
+    }
+  }
 }
 
 /* ============================== zones ============================== */
@@ -802,6 +991,12 @@ $("zcd").addEventListener("click", () => createZone("demand"));
 $("zcs").addEventListener("click", () => createZone("supply"));
 $("zccancel").addEventListener("click", () => { resetMark(); draw(); });
 $("zclear").addEventListener("click", () => { writeZones([]); renderZoneList(); draw(); setStatus("Zones cleared for this symbol and timeframe."); });
+let ovSeg = false, ovTrend = false;
+try { ovSeg = localStorage.getItem("zc_ov_seg") === "1"; ovTrend = localStorage.getItem("zc_ov_trend") === "1"; } catch(e){}
+$("ovseg").checked = ovSeg;
+$("ovtrend").checked = ovTrend;
+$("ovseg").addEventListener("change", () => { ovSeg = $("ovseg").checked; try { localStorage.setItem("zc_ov_seg", ovSeg ? "1" : "0"); } catch(e){} draw(); });
+$("ovtrend").addEventListener("change", () => { ovTrend = $("ovtrend").checked; try { localStorage.setItem("zc_ov_trend", ovTrend ? "1" : "0"); } catch(e){} draw(); });
 $("copybtn").addEventListener("click", copyChartImage);
 $("resetview").addEventListener("click", () => {
   state.pScale = 1;
