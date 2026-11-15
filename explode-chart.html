@@ -25,8 +25,14 @@
   #status{ padding:0 18px 6px; font-size:13px; color:var(--mut); min-height:18px; }
   #status.err{ color:var(--dn); }
   #readout{ padding:0 18px 6px; font-size:13px; color:var(--ink); min-height:18px; font-variant-numeric:tabular-nums; }
-  #wrap{ margin:0 18px 8px; background:#fff; border:1px solid var(--line); border-radius:10px; }
+  #wrap{ margin:0 18px 8px; background:#fff; border:1px solid var(--line); border-radius:10px; position:relative; }
   canvas{ display:block; width:100%; }
+  #menu{ position:absolute; z-index:5; min-width:218px; background:#fff; border:1px solid var(--line);
+         border-radius:10px; box-shadow:0 8px 24px rgba(17,24,39,.18); padding:6px; }
+  #menu .mhead{ font-size:12px; font-weight:700; color:var(--mut); padding:4px 8px 6px; }
+  #menu button{ display:block; width:100%; text-align:left; border:0; background:#fff; padding:8px; border-radius:7px; font-size:14px; }
+  #menu button:hover{ background:#eff6ff; }
+  #menu .mnote{ font-size:12.5px; color:var(--mut); padding:6px 8px; line-height:1.45; max-width:230px; }
   .help{ padding:0 18px 18px; font-size:13px; color:var(--mut); max-width:900px; line-height:1.5; }
   .help b{ color:var(--ink); }
 </style>
@@ -34,7 +40,7 @@
 <body>
 <header>
   <h1>Exploding Candle</h1>
-  <p class="sub">Load a symbol, then click any candle to open it up into the smaller-timeframe candles inside it — the drill-down, drawn in place. Or switch to Draw zone mode and tap candles to lay their supply / demand zones over the chart.</p>
+  <p class="sub">Load a symbol, then click any candle: a small menu offers what that candle can do — open it up into the smaller-timeframe candles inside it, or draw its supply / demand zone over the chart.</p>
 </header>
 
 <div class="bar">
@@ -47,9 +53,6 @@
     <option value="1d">Daily</option>
   </select>
   <button id="load" class="primary">Load</button>
-  <span class="seg" role="group" aria-label="Click mode">
-    <button id="modeExplode" class="on">Explode</button><button id="modeZone">Draw zone</button>
-  </span>
   <button id="clearZones">Clear zones</button>
   <button id="reset">Reset view</button>
 </div>
@@ -57,11 +60,11 @@
 <div id="crumb"></div>
 <div id="status"></div>
 <div id="readout"></div>
-<div id="wrap"><canvas id="chart" height="560"></canvas></div>
+<div id="wrap"><canvas id="chart" height="560"></canvas><div id="menu" hidden></div></div>
 
 <div class="help">
-  <p><b>Explode mode:</b> click a candle and it opens into the candles of the next timeframe down (Monthly → Weekly → Daily), right where it sits, with its neighbours still around it. Click a candle inside an opened family to go one more level down — two levels at most, the way Mr. Black drills. Click a family's header strip (or its ✕) to fold it back up. <b>Daily candles can't be exploded</b> — that would need intraday data, which the free feed doesn't include.</p>
-  <p><b>Draw zone mode:</b> click a candle and its zone is drawn from it the Essentials way — a demand zone runs from the bottom of the candle's lowest wick to the top of its body, a supply zone from the top of its highest wick to the bottom of its body — and whether it is demand or supply follows the departure: if price leaves upward it is demand, downward it is supply. Zones stay on the chart while you explode and fold candles, so you can see a zone against the smaller candles inside it. Zones can be drawn from candles inside an exploded family too (the label names that candle's timeframe). Click a zone in Draw zone mode to remove just that one, or use Clear zones.</p>
+  <p><b>Click a candle</b> and a small menu appears with the actions that fit that candle. <b>Drill down one level</b> opens it into the candles of the next timeframe down (Monthly → Weekly → Daily), right where it sits, with its neighbours still around it. <b>Drill down two levels</b> (Monthly candles only) opens it straight through to its Daily candles in one step. Two levels below the starting timeframe is the deepest the drill goes — the way Mr. Black drills. A candle inside an opened family gets its own menu, including <b>Unexplode</b> to fold its family back up (a family's header strip and its ✕ do the same). <b>Daily candles can't be drilled into</b> — that would need intraday data, which the free feed doesn't include; the menu says so.</p>
+  <p><b>Draw zone</b> (in the same menu) draws the candle's zone the Essentials way — a demand zone runs from the bottom of the candle's lowest wick to the top of its body, a supply zone from the top of its highest wick to the bottom of its body — and whether it is demand or supply follows the departure: if price leaves upward it is demand, downward it is supply. Zones stay on the chart while you explode and fold candles, so you can see a zone against the smaller candles inside it. Zones can be drawn from candles inside an exploded family too (the label names that candle's timeframe). A candle that already has a zone offers <b>Remove zone</b> instead; Clear zones takes them all off.</p>
   <p>Data: your relay (Polygon daily candles, about two years); Weekly and Monthly are built from the daily candles in the page, exactly as on the Zone Chart.</p>
 </div>
 
@@ -75,7 +78,7 @@ const RELAY_DEFAULT = "https://zone-relay.michaeljosephsinclair.workers.dev";
 
 /* ---------------- state ---------------- */
 const state = {
-  symbol: "", baseTf: "1mo", mode: "explode",
+  symbol: "", baseTf: "1mo",
   daily: null,            // [{t,o,h,l,c,v}] ascending
   byTf: null,             // {"1d":[...], "1wk":[...], "1mo":[...]}
   roots: [],              // top-level nodes
@@ -369,11 +372,8 @@ function showReadout(n){
   if (!n){ $("readout").textContent = ""; return; }
   const k = n.c, d = decimals();
   let s = state.symbol + " · " + TF_LABEL[n.tf] + " · " + fmtDate(k.t, n.tf) +
-          " · O " + k.o.toFixed(d) + "  H " + k.h.toFixed(d) + "  L " + k.l.toFixed(d) + "  C " + k.c.toFixed(d);
-  if (state.mode === "explode")
-    s += n.tf === "1d" ? "  — daily candles can't be exploded (no intraday in the free feed)"
-                       : "  — click to explode into " + TF_LABEL[NEXT_TF[n.tf]];
-  else s += "  — click to draw its zone";
+          " · O " + k.o.toFixed(d) + "  H " + k.h.toFixed(d) + "  L " + k.l.toFixed(d) + "  C " + k.c.toFixed(d) +
+          "  — click for actions";
   $("readout").textContent = s;
 }
 cv.addEventListener("mousemove", ev => {
@@ -383,55 +383,80 @@ cv.addEventListener("mousemove", ev => {
   const n = (y >= geom.top && y <= geom.top + geom.plotH) ? nodeAt(x) : null;
   if (n !== state.hover){ state.hover = n; showReadout(n); draw(); }
 });
+/* ---------------- contextual pop-up menu ---------------- */
+const menuEl = $("menu");
+let menuNode = null;
+function closeMenu(){ menuEl.hidden = true; menuNode = null; }
+function zoneOf(node){ return state.zones.find(z => z.node === node) || null; }
+function removeZoneFor(node){
+  const i = state.zones.findIndex(z => z.node === node);
+  if (i >= 0){ state.zones.splice(i, 1); setStatus("Zone removed. " + state.zones.length + " zone(s) left."); draw(); }
+}
+function drillTwo(node){
+  explode(node);
+  if (node.kids) for (const k of node.kids.slice()) if (childCandles(k).length) explode(k);
+}
+function openMenu(node, px, py){
+  menuNode = node;
+  menuEl.innerHTML = "";
+  const head = document.createElement("div");
+  head.className = "mhead";
+  head.textContent = TF_LABEL[node.tf] + " candle · " + fmtDate(node.c.t, node.tf);
+  menuEl.append(head);
+  const item = (label, fn) => {
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.addEventListener("click", () => { closeMenu(); fn(); });
+    menuEl.append(b);
+  };
+  const note = txt => {
+    const d = document.createElement("div");
+    d.className = "mnote"; d.textContent = txt;
+    menuEl.append(d);
+  };
+  /* drill actions — only what this candle's timeframe and depth allow */
+  if (node.tf === "1d"){
+    note("Drilling down needs intraday data, which the free feed doesn't include.");
+  } else if (node.depth >= MAX_DEPTH){
+    note("Already two timeframes down from " + TF_LABEL[state.baseTf] + " — the deepest the drill goes.");
+  } else {
+    item("Drill down one level → " + TF_LABEL[NEXT_TF[node.tf]], () => explode(node));
+    if (node.tf === "1mo" && node.depth + 2 <= MAX_DEPTH)
+      item("Drill down two levels → Daily", () => drillTwo(node));
+  }
+  /* zone actions */
+  if (zoneOf(node)) item("Remove zone", () => removeZoneFor(node));
+  else item("Draw zone", () => addZone(node));
+  /* family collapse */
+  if (node.parent)
+    item("Unexplode — fold back to the " + TF_LABEL[node.parent.tf] + " candle", () => collapse(node.parent));
+  menuEl.hidden = false;
+  /* anchor to the candle, clamped inside the chart box */
+  const wrapW = cv.clientWidth, wrapH = cv.clientHeight;
+  const mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
+  menuEl.style.left = Math.max(4, Math.min(px + 8, wrapW - mw - 4)) + "px";
+  menuEl.style.top = Math.max(4, Math.min(py + 8, wrapH - mh - 4)) + "px";
+}
 cv.addEventListener("click", ev => {
   if (!geom) return;
   const r = cv.getBoundingClientRect();
   const x = ev.clientX - r.left, y = ev.clientY - r.top;
   for (const hh of hitHeaders){
-    if (x >= hh.x0 && x <= hh.x1 && y >= hh.y0 && y <= hh.y1){ collapse(hh.node); return; }
+    if (x >= hh.x0 && x <= hh.x1 && y >= hh.y0 && y <= hh.y1){ closeMenu(); collapse(hh.node); return; }
   }
-  if (y < geom.top || y > geom.top + geom.plotH) return;
-  if (state.mode === "zone"){
-    const p = priceAt(y);
-    for (let i = state.zones.length - 1; i >= 0; i--){
-      const z = state.zones[i];
-      if (p >= z.bottom && p <= z.top && x >= (z._zx0 || 0)){
-        state.zones.splice(i, 1);
-        setStatus("Zone removed. " + state.zones.length + " zone(s) left.");
-        draw(); return;
-      }
-    }
-    const n = nodeAt(x);
-    if (n) addZone(n);
-    return;
-  }
-  /* explode mode */
+  if (y < geom.top || y > geom.top + geom.plotH){ closeMenu(); return; }
   const n = nodeAt(x);
-  if (!n) return;
-  if (n.tf === "1d"){
-    setStatus("Exploding a daily candle needs intraday data, which the free feed doesn't include.");
-    return;
-  }
-  if (n.depth >= MAX_DEPTH){
-    setStatus("That's already two timeframes down from " + TF_LABEL[state.baseTf] + " — the deepest the drill goes.");
-    return;
-  }
-  explode(n);
+  if (!n){ closeMenu(); return; }
+  if (menuNode === n && !menuEl.hidden){ closeMenu(); return; }   // second tap on same candle dismisses
+  openMenu(n, x, y);
 });
+document.addEventListener("keydown", ev => { if (ev.key === "Escape") closeMenu(); });
+document.addEventListener("mousedown", ev => { if (!menuEl.hidden && !menuEl.contains(ev.target) && ev.target !== cv) closeMenu(); });
 
 /* ---------------- controls ---------------- */
-function setMode(m){
-  state.mode = m;
-  $("modeExplode").classList.toggle("on", m === "explode");
-  $("modeZone").classList.toggle("on", m === "zone");
-  setStatus(m === "zone" ? "Draw zone mode: click a candle to draw its zone; click a zone to remove it."
-                         : "Explode mode: click a candle to open it into the next timeframe down.");
-  if (state.hover) showReadout(state.hover);
-}
-$("modeExplode").addEventListener("click", () => setMode("explode"));
-$("modeZone").addEventListener("click", () => setMode("zone"));
 $("clearZones").addEventListener("click", () => { state.zones = []; setStatus("All zones cleared."); draw(); });
 $("reset").addEventListener("click", () => {
+  closeMenu();
   state.roots.forEach(n => { n.expanded = false; });
   state.lastPath = null; setStatus("View reset — all families folded back up. Zones kept.");
   draw(); updateCrumb();
@@ -439,9 +464,10 @@ $("reset").addEventListener("click", () => {
 $("tf").addEventListener("change", () => { if (state.daily) loadView(); });
 $("symbol").addEventListener("keydown", ev => { if (ev.key === "Enter") doLoad(); });
 $("load").addEventListener("click", doLoad);
-window.addEventListener("resize", () => draw());
+window.addEventListener("resize", () => { closeMenu(); draw(); });
 
 function loadView(){
+  closeMenu();
   state.baseTf = $("tf").value;
   state.zones = [];
   buildRoots();
