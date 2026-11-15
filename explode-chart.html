@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Exploding Candle — suzel.com</title>
+<style>
+  :root{ --blue:#2563eb; --blue-d:#1d4ed8; --up:#2e7d32; --dn:#c62828; --ink:#111827; --mut:#6b7280; --line:#d1d5db; }
+  *{ box-sizing:border-box; }
+  body{ font-family:system-ui,-apple-system,"Segoe UI",sans-serif; color:var(--ink); margin:0; background:#f8fafc; }
+  header{ padding:14px 18px 4px; }
+  h1{ font-size:20px; margin:0 0 2px; }
+  .sub{ color:var(--mut); font-size:13px; margin:0 0 10px; }
+  .bar{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:0 18px 8px; }
+  .bar label{ font-size:13px; color:var(--mut); }
+  input#symbol{ font-size:15px; padding:7px 10px; border:1px solid var(--line); border-radius:8px; width:130px; text-transform:uppercase; }
+  select#tf{ font-size:15px; padding:7px; border:1px solid var(--line); border-radius:8px; }
+  button{ font-size:14px; padding:7px 14px; border-radius:8px; border:1px solid var(--line); background:#fff; cursor:pointer; }
+  button.primary{ background:var(--blue); border-color:var(--blue); color:#fff; font-weight:600; }
+  button.primary:hover{ background:var(--blue-d); }
+  .seg{ display:inline-flex; border:1px solid var(--line); border-radius:8px; overflow:hidden; }
+  .seg button{ border:0; border-radius:0; padding:7px 12px; background:#fff; }
+  .seg button.on{ background:var(--blue); color:#fff; font-weight:600; }
+  #crumb{ padding:2px 18px; font-size:13.5px; font-weight:600; color:var(--blue-d); min-height:20px; }
+  #status{ padding:0 18px 6px; font-size:13px; color:var(--mut); min-height:18px; }
+  #status.err{ color:var(--dn); }
+  #readout{ padding:0 18px 6px; font-size:13px; color:var(--ink); min-height:18px; font-variant-numeric:tabular-nums; }
+  #wrap{ margin:0 18px 8px; background:#fff; border:1px solid var(--line); border-radius:10px; }
+  canvas{ display:block; width:100%; }
+  .help{ padding:0 18px 18px; font-size:13px; color:var(--mut); max-width:900px; line-height:1.5; }
+  .help b{ color:var(--ink); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Exploding Candle</h1>
+  <p class="sub">Load a symbol, then click any candle to open it up into the smaller-timeframe candles inside it — the drill-down, drawn in place. Or switch to Draw zone mode and tap candles to lay their supply / demand zones over the chart.</p>
+</header>
+
+<div class="bar">
+  <label for="symbol">Symbol</label>
+  <input id="symbol" value="QQQ" autocomplete="off" spellcheck="false">
+  <label for="tf">Timeframe</label>
+  <select id="tf">
+    <option value="1mo" selected>Monthly</option>
+    <option value="1wk">Weekly</option>
+    <option value="1d">Daily</option>
+  </select>
+  <button id="load" class="primary">Load</button>
+  <span class="seg" role="group" aria-label="Click mode">
+    <button id="modeExplode" class="on">Explode</button><button id="modeZone">Draw zone</button>
+  </span>
+  <button id="clearZones">Clear zones</button>
+  <button id="reset">Reset view</button>
+</div>
+
+<div id="crumb"></div>
+<div id="status"></div>
+<div id="readout"></div>
+<div id="wrap"><canvas id="chart" height="560"></canvas></div>
+
+<div class="help">
+  <p><b>Explode mode:</b> click a candle and it opens into the candles of the next timeframe down (Monthly → Weekly → Daily), right where it sits, with its neighbours still around it. Click a candle inside an opened family to go one more level down — two levels at most, the way Mr. Black drills. Click a family's header strip (or its ✕) to fold it back up. <b>Daily candles can't be exploded</b> — that would need intraday data, which the free feed doesn't include.</p>
+  <p><b>Draw zone mode:</b> click a candle and its zone is drawn from it the Essentials way — a demand zone runs from the bottom of the candle's lowest wick to the top of its body, a supply zone from the top of its highest wick to the bottom of its body — and whether it is demand or supply follows the departure: if price leaves upward it is demand, downward it is supply. Zones stay on the chart while you explode and fold candles, so you can see a zone against the smaller candles inside it. Zones can be drawn from candles inside an exploded family too (the label names that candle's timeframe). Click a zone in Draw zone mode to remove just that one, or use Clear zones.</p>
+  <p>Data: your relay (Polygon daily candles, about two years); Weekly and Monthly are built from the daily candles in the page, exactly as on the Zone Chart.</p>
+</div>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const TF_LABEL = {"1mo":"Monthly","1wk":"Weekly","1d":"Daily"};
+const NEXT_TF  = {"1mo":"1wk","1wk":"1d","1d":null};
+const MAX_DEPTH = 2;
+const RELAY_DEFAULT = "https://zone-relay.michaeljosephsinclair.workers.dev";
+
+/* ---------------- state ---------------- */
+const state = {
+  symbol: "", baseTf: "1mo", mode: "explode",
+  daily: null,            // [{t,o,h,l,c,v}] ascending
+  byTf: null,             // {"1d":[...], "1wk":[...], "1mo":[...]}
+  roots: [],              // top-level nodes
+  zones: [],              // {node, type, top, bottom, tf}
+  lastPath: null,         // [tf,...] of deepest/last explosion, for the breadcrumb
+  hover: null,            // node under pointer
+};
+let frameId = 0;          // incremented each draw; node._f marks "laid out this frame"
+
+/* ---------------- data: same relay door as the Zone Chart ---------------- */
+function polygonSymbol(s){ s = s.trim().toUpperCase(); return /^[A-Z]{6}$/.test(s) ? "C:" + s : s; }
+function parsePolygon(json){
+  if (!json || json.status === "ERROR") throw new Error((json && (json.error || json.message)) || "The relay returned an error.");
+  if (!Array.isArray(json.results)) throw new Error("Unexpected reply from the relay (no results).");
+  const out = json.results.map(r => ({t:r.t, o:r.o, h:r.h, l:r.l, c:r.c, v:r.v || 0})).filter(k => isFinite(k.c));
+  out.sort((a,b)=>a.t-b.t);
+  return out;
+}
+/* Aggregation identical to the Zone Chart's: Monday-based weeks, calendar months. */
+function aggregate(candles, tf){
+  if (tf === "1d") return candles;
+  const key = t => {
+    const d = new Date(t);
+    if (tf === "1mo") return d.getUTCFullYear()*100 + d.getUTCMonth();
+    const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+    monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+    return monday.getTime();
+  };
+  const out = []; let cur = null, curKey = null;
+  for (const k of candles){
+    const kk = key(k.t);
+    if (kk !== curKey){ cur = {t: tf==="1wk" ? kk : Date.UTC(new Date(k.t).getUTCFullYear(), new Date(k.t).getUTCMonth(), 1), o:k.o, h:k.h, l:k.l, c:k.c, v:k.v}; out.push(cur); curKey = kk; }
+    else { cur.h = Math.max(cur.h, k.h); cur.l = Math.min(cur.l, k.l); cur.c = k.c; cur.v += k.v; }
+  }
+  return out;
+}
+function monthKey(t){ const d = new Date(t); return d.getUTCFullYear()*100 + d.getUTCMonth(); }
+function weekKey(t){
+  const d = new Date(t);
+  const monday = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()));
+  monday.setUTCDate(monday.getUTCDate() - ((monday.getUTCDay() + 6) % 7));
+  return monday.getTime();
+}
+/* The candles one level down that compose a parent candle.
+   Weekly parents nest exactly into their daily bars. Monthly parents are opened
+   into the Monday-weeks of that month's own daily bars (clipped at the month
+   edges), so the children always add up to the parent exactly and stay inside
+   its high–low span — a calendar week that straddles a month boundary belongs
+   partly to each month, and only the in-month part composes this candle. */
+function childCandles(node){
+  if (node.tf === "1mo"){
+    const mk = monthKey(node.c.t);
+    const days = state.byTf["1d"].filter(d => monthKey(d.t) === mk);
+    return aggregate(days, "1wk");
+  }
+  if (node.tf === "1wk"){
+    return state.byTf["1d"].filter(d => weekKey(d.t) === node.c.t);
+  }
+  return [];
+}
+/* First and last daily bars inside a parent candle (for family header labels). */
+function daySpan(node){
+  if (node.tf === "1d") return [node.c.t, node.c.t];
+  if (node.tf === "1wk"){
+    const days = state.byTf["1d"].filter(d => weekKey(d.t) === node.c.t);
+    return days.length ? [days[0].t, days[days.length-1].t] : [node.c.t, node.c.t];
+  }
+  const mk = monthKey(node.c.t);
+  const days = state.byTf["1d"].filter(d => monthKey(d.t) === mk);
+  return days.length ? [days[0].t, days[days.length-1].t] : [node.c.t, node.c.t];
+}
+
+/* ---------------- node tree ---------------- */
+function makeNode(c, tf, depth, parent, sibArr, sibIdx){
+  return { c, tf, depth, parent, sibArr, sibIdx, kids:null, expanded:false,
+           u0:0, u1:0, x0:0, x1:0, _f:-1 };
+}
+function buildRoots(){
+  const arr = state.byTf[state.baseTf];
+  state.roots = arr.map((c,i) => makeNode(c, state.baseTf, 0, null, null, i));
+  state.roots.forEach(n => n.sibArr = state.roots);
+  state.lastPath = null;
+}
+function explode(node){
+  const kids = childCandles(node);
+  if (!kids.length){ setStatus("No smaller-timeframe candles inside that one in the fetched window.", true); return; }
+  const ntf = NEXT_TF[node.tf];
+  node.daySpan = daySpan(node);
+  node.kids = kids.map((c,i) => makeNode(c, ntf, node.depth+1, node, null, i));
+  node.kids.forEach(n => n.sibArr = node.kids);
+  node.expanded = true;
+  const path = [];
+  for (let n = node; n; n = n.parent) path.unshift(n.tf);
+  path.push(ntf);
+  state.lastPath = path;
+  setStatus("");
+  draw();
+  updateCrumb();
+}
+function collapse(node){
+  node.expanded = false;   // kids are kept, so zones drawn from inside keep their anchor
+  if (state.lastPath && state.lastPath.length > node.depth + 1) state.lastPath = null;
+  draw();
+  updateCrumb();
+}
+
+/* ---------------- formatting ---------------- */
+function fmtDate(t, tf){
+  const d = new Date(t);
+  if (tf === "1mo") return d.toLocaleDateString("en-US",{month:"short", year:"numeric", timeZone:"UTC"});
+  return d.toLocaleDateString("en-US",{month:"short", day:"numeric", year:"numeric", timeZone:"UTC"});
+}
+function fmtShort(t){
+  return new Date(t).toLocaleDateString("en-US",{month:"short", day:"numeric", timeZone:"UTC"});
+}
+function decimals(){ 
+  const cs = state.daily; const p = cs && cs.length ? cs[cs.length-1].c : 100;
+  return p < 5 ? 4 : 2;
+}
+function setStatus(msg, err){ const s = $("status"); s.textContent = msg || ""; s.className = err ? "err" : ""; }
+function updateCrumb(){
+  const el = $("crumb");
+  if (!state.roots.length){ el.textContent = ""; return; }
+  if (!state.lastPath){
+    el.textContent = TF_LABEL[state.baseTf] + " — click a candle to explode it (max " + MAX_DEPTH + " levels down)";
+  } else {
+    const lvl = state.lastPath.length - 1;
+    el.textContent = state.lastPath.map(t => TF_LABEL[t]).join(" ▸ ") + "  (level " + lvl + " of max " + MAX_DEPTH + ")";
+  }
+}
+
+/* ---------------- zones ---------------- */
+function classifyDeparture(node){
+  const sib = node.sibArr || [], i = node.sibIdx, k = node.c;
+  for (let j = i+1; j < Math.min(i+4, sib.length); j++){
+    if (sib[j].c.c > k.h) return "demand";
+    if (sib[j].c.c < k.l) return "supply";
+  }
+  const nxt = sib[i+1];
+  if (nxt) return nxt.c.c >= k.c ? "demand" : "supply";
+  return k.c >= k.o ? "demand" : "supply";
+}
+function addZone(node){
+  const k = node.c, type = classifyDeparture(node);
+  const zone = type === "demand"
+    ? { node, type, bottom: k.l, top: Math.max(k.o, k.c), tf: node.tf }
+    : { node, type, top: k.h, bottom: Math.min(k.o, k.c), tf: node.tf };
+  state.zones.push(zone);
+  setStatus((type === "demand" ? "Demand" : "Supply") + " zone drawn from the " + TF_LABEL[node.tf] +
+            " candle of " + fmtDate(k.t, node.tf) + " — " + zone.bottom.toFixed(decimals()) + " to " + zone.top.toFixed(decimals()) + ".");
+  draw();
+}
+/* The visible node whose slot a (possibly hidden) node currently sits in. */
+function anchorNode(node){
+  let n = node;
+  while (n && n._f !== frameId) n = n.parent;
+  return n;
+}
+
+/* ---------------- layout + draw ---------------- */
+const cv = $("chart"), ctx = cv.getContext("2d");
+const PAD_R = 64, PAD_B = 24, ROW_H = 17;
+let geom = null;         // {x0, plotW, top, plotH, yMin, yMax, unitW}
+let hitCandles = [];     // visible leaf/collapsed nodes with pixel rects
+let hitHeaders = [];     // {x0,x1,y0,y1,node}
+
+function units(node){ return (node.expanded && node.kids) ? node.kids.reduce((s,k)=>s+units(k),0) : 1; }
+function layout(node, u){
+  node.u0 = u; node.u1 = u + units(node); node._f = frameId;
+  if (node.expanded && node.kids){ let c = u; for (const k of node.kids){ layout(k, c); c = k.u1; } }
+}
+function visibleLeaves(node, out){
+  if (node.expanded && node.kids){ for (const k of node.kids) visibleLeaves(k, out); }
+  else out.push(node);
+}
+function expandedFamilies(node, out){
+  if (node.expanded && node.kids){ out.push(node); for (const k of node.kids) expandedFamilies(k, out); }
+}
+function fitCanvas(){
+  const w = cv.clientWidth || cv.parentElement.clientWidth || 960;
+  const h = 560, dpr = window.devicePixelRatio || 1;
+  cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+  cv.style.height = h + "px";
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { w, h };
+}
+function draw(){
+  const { w, h } = fitCanvas();
+  ctx.clearRect(0, 0, w, h);
+  hitCandles = []; hitHeaders = [];
+  if (!state.roots.length){ 
+    ctx.fillStyle = "#6b7280"; ctx.font = "14px system-ui";
+    ctx.fillText("Type a symbol and press Load.", 18, 40);
+    geom = null; return;
+  }
+  frameId++;
+  const totalU = state.roots.reduce((s,n)=>s+units(n),0);
+  state.roots.forEach((n,i)=>{ if (i===0) layout(n,0); else layout(n, state.roots[i-1].u1); });
+  const leaves = []; state.roots.forEach(n => visibleLeaves(n, leaves));
+  let lo = Infinity, hi = -Infinity;
+  for (const n of leaves){ lo = Math.min(lo, n.c.l); hi = Math.max(hi, n.c.h); }
+  for (const z of state.zones){ lo = Math.min(lo, z.bottom); hi = Math.max(hi, z.top); }
+  const pad = (hi - lo) * 0.07 || 1; lo -= pad; hi += pad;
+  const top = 6 + ROW_H * 2 + 4;               // room for two family-header rows
+  geom = { x0: 8, plotW: w - 8 - PAD_R, top, plotH: h - top - PAD_B, yMin: lo, yMax: hi,
+           unitW: (w - 8 - PAD_R) / totalU };
+  const Y = p => geom.top + (geom.yMax - p) / (geom.yMax - geom.yMin) * geom.plotH;
+  const X = u => geom.x0 + u * geom.unitW;
+  for (const n of state.roots){ /* set pixel spans now that geom exists */ }
+  (function setPx(node){ node.x0 = X(node.u0); node.x1 = X(node.u1);
+    if (node.kids) node.kids.forEach(setPx); })( { kids: state.roots } );
+
+  /* price grid */
+  ctx.font = "11px system-ui"; ctx.textBaseline = "middle";
+  const steps = 6;
+  for (let i = 0; i <= steps; i++){
+    const p = lo + (hi - lo) * i / steps, y = Y(p);
+    ctx.strokeStyle = "#eef1f4"; ctx.beginPath(); ctx.moveTo(geom.x0, y); ctx.lineTo(geom.x0 + geom.plotW, y); ctx.stroke();
+    ctx.fillStyle = "#6b7280"; ctx.textAlign = "left";
+    ctx.fillText(p.toFixed(decimals()), geom.x0 + geom.plotW + 6, y);
+  }
+
+  /* exploded-family backgrounds + headers */
+  const fams = []; state.roots.forEach(n => expandedFamilies(n, fams));
+  for (const f of fams){
+    const fx0 = f.x0 + 1, fx1 = f.x1 - 1;
+    ctx.fillStyle = f.depth === 0 ? "rgba(37,99,235,0.055)" : "rgba(180,83,9,0.07)";
+    ctx.fillRect(fx0, geom.top - 2, fx1 - fx0, geom.plotH + 2);
+    ctx.strokeStyle = f.depth === 0 ? "rgba(37,99,235,0.45)" : "rgba(180,83,9,0.5)";
+    ctx.setLineDash([4,3]); ctx.strokeRect(fx0, geom.top - 2, fx1 - fx0, geom.plotH + 2); ctx.setLineDash([]);
+    const rowY = 6 + f.depth * ROW_H;
+    const span = f.daySpan || [f.kids[0].c.t, f.kids[f.kids.length-1].c.t];
+    const label = TF_LABEL[NEXT_TF[f.tf]] + " inside " + fmtDate(f.c.t, f.tf) +
+                  "  (" + fmtShort(span[0]) + " – " + fmtShort(span[1]) + ")";
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+    ctx.fillRect(fx0, rowY, fx1 - fx0, ROW_H - 3);
+    ctx.fillStyle = f.depth === 0 ? "#1d4ed8" : "#92400e";
+    ctx.font = "bold 11px system-ui"; ctx.textAlign = "left";
+    ctx.fillText(label, fx0 + 5, rowY + (ROW_H - 3) / 2);
+    ctx.textAlign = "right"; ctx.font = "bold 12px system-ui";
+    ctx.fillText("✕", fx1 - 4, rowY + (ROW_H - 3) / 2);
+    hitHeaders.push({ x0: fx0, x1: fx1, y0: rowY, y1: rowY + ROW_H - 3, node: f });
+  }
+
+  /* zones (persist across explode/collapse; anchored to their candle's current slot) */
+  ctx.font = "bold 11px system-ui";
+  for (const z of state.zones){
+    const a = anchorNode(z.node); if (!a) continue;
+    const zx0 = a.x0, zx1 = geom.x0 + geom.plotW;
+    const zyT = Y(z.top), zyB = Y(z.bottom);
+    ctx.fillStyle = z.type === "demand" ? "rgba(46,125,50,0.13)" : "rgba(198,40,40,0.12)";
+    ctx.fillRect(zx0, zyT, zx1 - zx0, zyB - zyT);
+    ctx.strokeStyle = z.type === "demand" ? "rgba(46,125,50,0.55)" : "rgba(198,40,40,0.5)";
+    ctx.beginPath(); ctx.moveTo(zx0, zyT); ctx.lineTo(zx1, zyT); ctx.moveTo(zx0, zyB); ctx.lineTo(zx1, zyB); ctx.stroke();
+    ctx.fillStyle = z.type === "demand" ? "#2e7d32" : "#c62828"; ctx.textAlign = "left";
+    ctx.fillText((z.type === "demand" ? "Demand zone (" : "Supply zone (") + TF_LABEL[z.tf] + ")", zx0 + 5, zyT + 8);
+    z._zx0 = zx0;
+  }
+
+  /* candles */
+  for (const n of leaves){
+    const cx = (n.x0 + n.x1) / 2, bw = Math.max(1, (n.x1 - n.x0) * 0.68);
+    const col = n.c.c >= n.c.o ? "#2e7d32" : "#c62828";
+    ctx.strokeStyle = col; ctx.fillStyle = col;
+    ctx.beginPath(); ctx.moveTo(cx, Y(n.c.h)); ctx.lineTo(cx, Y(n.c.l)); ctx.stroke();
+    const yO = Y(n.c.o), yC = Y(n.c.c);
+    ctx.fillRect(cx - bw/2, Math.min(yO, yC), bw, Math.max(1.4, Math.abs(yC - yO)));
+    if (n === state.hover){ ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 1.6; ctx.strokeRect(n.x0 + 0.5, geom.top, (n.x1 - n.x0) - 1, geom.plotH); ctx.lineWidth = 1; }
+    hitCandles.push({ node: n, x0: n.x0, x1: n.x1 });
+  }
+
+  /* date labels along the bottom, thinned to fit */
+  ctx.fillStyle = "#6b7280"; ctx.font = "10.5px system-ui"; ctx.textAlign = "center";
+  let lastLbl = -1e9;
+  for (const n of leaves){
+    const cx = (n.x0 + n.x1) / 2;
+    if (cx - lastLbl < 74) continue;
+    lastLbl = cx;
+    ctx.fillText(fmtShort(n.c.t), cx, geom.top + geom.plotH + 12);
+  }
+  cv.style.cursor = state.hover ? "pointer" : "default";
+}
+function priceAt(y){ return geom.yMax - (y - geom.top) / geom.plotH * (geom.yMax - geom.yMin); }
+function nodeAt(x){
+  for (const hc of hitCandles){ if (x >= hc.x0 && x < hc.x1) return hc.node; }
+  return null;
+}
+
+/* ---------------- interaction ---------------- */
+function showReadout(n){
+  if (!n){ $("readout").textContent = ""; return; }
+  const k = n.c, d = decimals();
+  let s = state.symbol + " · " + TF_LABEL[n.tf] + " · " + fmtDate(k.t, n.tf) +
+          " · O " + k.o.toFixed(d) + "  H " + k.h.toFixed(d) + "  L " + k.l.toFixed(d) + "  C " + k.c.toFixed(d);
+  if (state.mode === "explode")
+    s += n.tf === "1d" ? "  — daily candles can't be exploded (no intraday in the free feed)"
+                       : "  — click to explode into " + TF_LABEL[NEXT_TF[n.tf]];
+  else s += "  — click to draw its zone";
+  $("readout").textContent = s;
+}
+cv.addEventListener("mousemove", ev => {
+  if (!geom) return;
+  const r = cv.getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  const n = (y >= geom.top && y <= geom.top + geom.plotH) ? nodeAt(x) : null;
+  if (n !== state.hover){ state.hover = n; showReadout(n); draw(); }
+});
+cv.addEventListener("click", ev => {
+  if (!geom) return;
+  const r = cv.getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  for (const hh of hitHeaders){
+    if (x >= hh.x0 && x <= hh.x1 && y >= hh.y0 && y <= hh.y1){ collapse(hh.node); return; }
+  }
+  if (y < geom.top || y > geom.top + geom.plotH) return;
+  if (state.mode === "zone"){
+    const p = priceAt(y);
+    for (let i = state.zones.length - 1; i >= 0; i--){
+      const z = state.zones[i];
+      if (p >= z.bottom && p <= z.top && x >= (z._zx0 || 0)){
+        state.zones.splice(i, 1);
+        setStatus("Zone removed. " + state.zones.length + " zone(s) left.");
+        draw(); return;
+      }
+    }
+    const n = nodeAt(x);
+    if (n) addZone(n);
+    return;
+  }
+  /* explode mode */
+  const n = nodeAt(x);
+  if (!n) return;
+  if (n.tf === "1d"){
+    setStatus("Exploding a daily candle needs intraday data, which the free feed doesn't include.");
+    return;
+  }
+  if (n.depth >= MAX_DEPTH){
+    setStatus("That's already two timeframes down from " + TF_LABEL[state.baseTf] + " — the deepest the drill goes.");
+    return;
+  }
+  explode(n);
+});
+
+/* ---------------- controls ---------------- */
+function setMode(m){
+  state.mode = m;
+  $("modeExplode").classList.toggle("on", m === "explode");
+  $("modeZone").classList.toggle("on", m === "zone");
+  setStatus(m === "zone" ? "Draw zone mode: click a candle to draw its zone; click a zone to remove it."
+                         : "Explode mode: click a candle to open it into the next timeframe down.");
+  if (state.hover) showReadout(state.hover);
+}
+$("modeExplode").addEventListener("click", () => setMode("explode"));
+$("modeZone").addEventListener("click", () => setMode("zone"));
+$("clearZones").addEventListener("click", () => { state.zones = []; setStatus("All zones cleared."); draw(); });
+$("reset").addEventListener("click", () => {
+  state.roots.forEach(n => { n.expanded = false; });
+  state.lastPath = null; setStatus("View reset — all families folded back up. Zones kept.");
+  draw(); updateCrumb();
+});
+$("tf").addEventListener("change", () => { if (state.daily) loadView(); });
+$("symbol").addEventListener("keydown", ev => { if (ev.key === "Enter") doLoad(); });
+$("load").addEventListener("click", doLoad);
+window.addEventListener("resize", () => draw());
+
+function loadView(){
+  state.baseTf = $("tf").value;
+  state.zones = [];
+  buildRoots();
+  setStatus(state.symbol + " · " + state.daily.length + " daily candles · " +
+            fmtDate(state.daily[0].t, "1d") + " – " + fmtDate(state.daily[state.daily.length-1].t, "1d") +
+            " · source: your relay (Polygon)");
+  draw(); updateCrumb(); showReadout(null);
+}
+async function doLoad(){
+  const raw = $("symbol").value.trim();
+  if (!raw){ setStatus("Type a symbol first.", true); return; }
+  const sym = raw.toUpperCase();
+  setStatus("Fetching " + sym + " daily candles from your relay — one pull covers Monthly, Weekly and Daily…");
+  try {
+    const base = (localStorage.getItem("zc_relay") || RELAY_DEFAULT).replace(/\/?$/, "");
+    const url = base + "/?symbol=" + encodeURIComponent(polygonSymbol(raw)) + "&tf=1d";
+    const r = await fetch(url);
+    if (!r.ok) throw new Error("Relay answered HTTP " + r.status + ".");
+    const j = await r.json();
+    const candles = parsePolygon(j);
+    if (!candles.length) throw new Error("No candles came back for that symbol.");
+    state.symbol = sym;
+    state.daily = candles;
+    state.byTf = { "1d": candles, "1wk": aggregate(candles, "1wk"), "1mo": aggregate(candles, "1mo") };
+    loadView();
+  } catch (e) {
+    setStatus("Lookup failed: " + e.message, true);
+  }
+}
+draw();
+updateCrumb();
+</script>
+</body>
+</html>
