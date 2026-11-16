@@ -15,7 +15,8 @@
   .bar label{ font-size:13px; color:var(--mut); }
   input#symbol{ font-size:15px; padding:7px 10px; border:1px solid var(--line); border-radius:8px; width:130px; text-transform:uppercase; }
   input#tdkey{ font-size:15px; padding:7px 10px; border:1px solid var(--line); border-radius:8px; width:220px; }
-  select#tf, select#provider{ font-size:15px; padding:7px; border:1px solid var(--line); border-radius:8px; }
+  select#tf, select#provider, select#zonesMode{ font-size:15px; padding:7px; border:1px solid var(--line); border-radius:8px; }
+  .bar input[type="checkbox"]{ width:16px; height:16px; vertical-align:-2px; margin:0 2px 0 0; }
   footer#verfoot{ padding:0 18px 18px; font-size:12.5px; color:var(--mut); }
   button{ font-size:14px; padding:7px 14px; border-radius:8px; border:1px solid var(--line); background:#fff; cursor:pointer; }
   button.primary{ background:var(--blue); border-color:var(--blue); color:#fff; font-weight:600; }
@@ -54,6 +55,11 @@
     <option value="1wk">Weekly</option>
     <option value="1d">Daily</option>
   </select>
+  <label for="zonesMode">Zones</label>
+  <select id="zonesMode">
+    <option value="all" selected>All timeframes</option>
+    <option value="current">This timeframe</option>
+  </select>
   <label for="provider">Lookup source</label>
   <select id="provider">
     <option value="relay" selected>My relay (Polygon)</option>
@@ -63,6 +69,7 @@
     <label for="tdkey">Twelve Data API key</label>
     <input id="tdkey" type="password" placeholder="paste your key — kept only in this browser" autocomplete="off">
   </span>
+  <label for="showGaps"><input type="checkbox" id="showGaps"> Show gaps</label>
   <button id="load" class="primary">Load</button>
   <button id="clearZones">Clear zones</button>
   <button id="copybtn">Copy chart image</button>
@@ -79,16 +86,18 @@
   <p><b>Draw zone</b> (in the same menu) draws the candle's zone the Essentials way — a demand zone runs from the bottom of the candle's lowest wick to the top of its body, a supply zone from the top of its highest wick to the bottom of its body — and whether it is demand or supply follows the departure: if price leaves upward it is demand, downward it is supply. Zones stay on the chart while you explode and fold candles, so you can see a zone against the smaller candles inside it. Zones can be drawn from candles inside an exploded family too (the label names that candle's timeframe). A candle that already has a zone offers <b>Remove zone</b> instead; Clear zones takes them all off.</p>
   <p><b>Growing a zone:</b> a base can span several candles. Click a candle right next to an existing zone and the menu offers <b>Add this candle to the zone</b> — the zone's edges then recompute from every candle in the group, using the most extreme wick and the most extreme body in the group. Click a candle inside a multi-candle zone to <b>Remove this candle from the zone</b> (the edges recompute from what is left) or to remove the whole zone. A zone can hold at most <b>7 candles</b> — Mr. Black's limit; the menu says so when a zone is full. The label shows the candle count when a zone has more than one.</p>
   <p><b>Two zones side by side — your choice:</b> clicking an unzoned candle next to a zone always offers both <b>Draw zone</b> (its own separate zone) and <b>Add this candle to the zone</b> — nothing ever merges on its own. Separate zones may overlap on screen; that is fine. If two neighbouring zones are the <b>same type</b> (both demand or both supply), a candle in one of them offers <b>Merge with the neighbouring zone</b>, combining them into one zone whose edges are the extremes across all their candles — as long as the combined count stays within the 7-candle limit (the menu notes it when a merge would pass the limit). Neighbouring zones of <b>opposite</b> types never merge; they simply coexist.</p>
+  <p><b>Zones travel across timeframes:</b> zones stay on the chart when you switch between Monthly, Weekly and Daily — only loading a <b>new symbol</b> clears them. A zone's prices are the same in every view, its band starts at the candle (or the higher-timeframe candle) that contains where it was drawn, and its label names the timeframe it came from, so a Weekly zone inside a Monthly chart still reads "Weekly". The <b>Zones</b> selector chooses between <b>All timeframes</b> — every timeframe's zones together, for the multiple-timeframe correlation Mr. Black emphasises — and <b>This timeframe</b>, which shows only the current timeframe's zones and merely hides the rest (switch back and they return). A zone carried over from another timeframe is for looking at in this view; adding candles, merging and removing still happen on its own timeframe. Clear zones removes all of them, whichever the selector says.</p>
   <p><b>Broken zones:</b> zones that price has closed through are shown hatched with dashed borders and marked <b>BROKEN</b> in the label. Only a candle <b>close</b> through the zone breaks it — below a demand zone's bottom edge, or above a supply zone's top edge — and that close must be on the zone's <b>own timeframe or a higher one</b>: a Weekly zone can be broken by a Weekly or Monthly close, never by a Daily one, and lower timeframes cannot break a zone. A wick through the edge doesn't count, and a still-forming higher-timeframe candle hasn't closed yet, so it can't break a zone either. A broken zone keeps its name and colour: a broken demand zone does not become a supply zone.</p>
+  <p><b>Show gaps</b> (the toggle above) shades the empty price space between one candle's close and the next candle's open wherever the two don't meet — the band sits on the later candle, between the two prices — and it is display only: it changes no data, no zones and no drilling.</p>
   <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. When you click a candle, its marker stays <b>pinned</b> to that candle while the menu is open, so you can still see which candle the menu belongs to while you choose. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically — the stretch pivots on the middle of the candles on screen, so tops and bottoms spread evenly; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles — the chart stays jammed up against the most recent candles on the right, so spreading and squeezing happen from the left side only, squeezing stops once all the candles are shown, and spreading can go all the way down to just a few candles left on the chart. Double-click either axis to reset just that axis; Reset view resets both.</p>
   <p><b>Copy chart image</b> puts a picture of the chart exactly as it looks right now on your clipboard to paste into an email (or downloads it if the browser refuses) — handy for sending a chart to Trade Phantoms Support.</p>
   <p>Data: choose the lookup source above — your relay (Polygon daily candles, about two years) or Twelve Data with your own free key (kept only in this browser, and shared with the Zone Chart on this site, so a key pasted there is already here). Weekly and Monthly are built from the daily candles in the page, exactly as on the Zone Chart.</p>
 </div>
-<footer id="verfoot">Exploding Candle v1.6</footer>
+<footer id="verfoot">Exploding Candle v1.7</footer>
 
 <script>
 "use strict";
-const VERSION = "1.6";
+const VERSION = "1.7";
 const $ = id => document.getElementById(id);
 const TF_LABEL = {"1mo":"Monthly","1wk":"Weekly","1d":"Daily"};
 const NEXT_TF  = {"1mo":"1wk","1wk":"1d","1d":null};
@@ -101,7 +110,7 @@ const state = {
   daily: null,            // [{t,o,h,l,c,v}] ascending
   byTf: null,             // {"1d":[...], "1wk":[...], "1mo":[...]}
   roots: [],              // top-level nodes
-  zones: [],              // {nodes:[node,...] sorted by sibIdx, node: earliest node (anchor compat), type, top, bottom, tf}
+  zones: [],              // {nodes:[node,...] sorted by sibIdx, node: earliest node (anchor compat), type, top, bottom, tf, t0: earliest candle's timestamp}
   lastPath: null,         // [tf,...] of deepest/last explosion, for the breadcrumb
   hover: null,            // node under pointer
   hoverY: null,           // pointer y (px) for the crosshair's horizontal line
@@ -112,6 +121,8 @@ const state = {
   pScale: 1,              // price-axis stretch factor from axis dragging (1 = auto)
   hScale: 1,              // horizontal (unit-width) scale factor from axis dragging (1 = full fit; never below 1)
   sourceLabel: "your relay (Polygon)",
+  showGaps: false,        // "Show gaps" toggle: shade close→open price gaps between visible candles
+  zonesMode: "all",       // "all": every timeframe's zones drawn together; "current": only the base timeframe's
 };
 let frameId = 0;          // incremented each draw; node._f marks "laid out this frame"
 
@@ -278,6 +289,12 @@ function recomputeZone(zone){
   zone.node = zone.nodes[0];
   const e = zoneExtremes(zone.nodes, zone.type);
   zone.top = e.top; zone.bottom = e.bottom;
+  /* Time anchor for cross-timeframe display: the timestamp of the group's
+     earliest candle. Zone prices are timeframe-independent; this is what
+     lets a zone find its slot again after the timeframe switches and its
+     original nodes are gone. Kept current on every add/remove/merge,
+     because every mutation path funnels through here. */
+  zone.t0 = Math.min(...zone.nodes.map(n => n.c.t));
   return zone;
 }
 function makeZone(node){
@@ -455,6 +472,79 @@ function anchorNode(node){
   while (n && n._f !== frameId) n = n.parent;
   return n;
 }
+/* ---- zones across timeframes (v1.7) ----
+   Zones are NOT cleared when the base timeframe switches (only a new
+   symbol clears them). After a switch the zone's original nodes belong to
+   a discarded tree, so the band's left edge resolves two ways: the
+   original anchor if it is present in the current frame (same tree, or
+   rebound — see rebindZonesToTree), otherwise BY TIME from zone.t0. */
+/* The Zones selector: "all" draws every timeframe's zones together (for
+   multiple-timeframe correlation); "current" draws only zones whose
+   origin timeframe is the base timeframe. Hidden zones are never deleted. */
+function zoneVisibleHere(zone){
+  return state.zonesMode !== "current" || zone.tf === state.baseTf;
+}
+/* The root candle of the current tree whose period contains timestamp t:
+   the root with the greatest period-start ≤ t (roots are ascending); if t
+   precedes the first root, the first root. */
+function rootContainingTime(t){
+  if (t === undefined || t === null || !state.roots.length) return null;
+  let best = null;
+  for (const r of state.roots){
+    if (r.c.t <= t) best = r; else break;
+  }
+  return best || state.roots[0];
+}
+/* The laid-out node whose slot starts a zone's band in the current frame:
+   the zone's own anchor when it is in this tree, else the root containing
+   the zone's t0. */
+function zoneAnchorNode(zone){
+  const a = zone.node ? anchorNode(zone.node) : null;
+  if (a) return a;
+  return rootContainingTime(zone.t0);
+}
+/* After buildRoots() discards the old tree, a zone whose timeframe IS the
+   new base timeframe can be rebound to the new tree's root nodes — its
+   candles are the very same byTf candle objects the roots wrap (identity
+   match), so editing (add/remove/merge) works again on its home
+   timeframe. Zones from other timeframes keep their old nodes: their
+   candle data and sibling arrays persist in state.byTf, so broken-zone
+   evaluation stays correct, and they draw via the time anchor. */
+function rebindZonesToTree(){
+  if (!state.zones.length || !state.roots.length) return;
+  const byCandle = new Map(state.roots.map(r => [r.c, r]));
+  for (const z of state.zones){
+    if (z.tf !== state.baseTf) continue;
+    const fresh = z.nodes.map(n => byCandle.get(n.c));
+    if (fresh.length && fresh.every(Boolean)){
+      z.nodes = fresh;
+      recomputeZone(z);   // same candles: extremes and t0 unchanged
+    }
+  }
+}
+/* ---- price gaps (v1.7, display only) ----
+   A gap is the empty price space between one candle's close and the next
+   candle's open. The 0.1%-of-price epsilon skips rounding noise (tiny
+   open/close mismatches in aggregated or feed data). Detection runs over
+   the visible leaf candles in on-screen order, so it works at any
+   timeframe and across exploded families — children compose their parents
+   exactly, so the leaf chain's opens/closes line up. */
+const GAP_EPS = 0.001;
+function gapBetween(prevNode, curNode){
+  if (!prevNode || !curNode) return 0;
+  const pc = prevNode.c.c, o = curNode.c.o;
+  if (!isFinite(pc) || !isFinite(o) || pc === 0) return 0;
+  const d = o - pc;
+  return Math.abs(d) > Math.abs(pc) * GAP_EPS ? d : 0;
+}
+function findGaps(leaves){
+  const out = [];
+  for (let i = 1; i < leaves.length; i++){
+    if (gapBetween(leaves[i-1], leaves[i]))
+      out.push({ node: leaves[i], from: leaves[i-1].c.c, to: leaves[i].c.o });
+  }
+  return out;
+}
 
 /* ---------------- layout + draw ---------------- */
 const cv = $("chart"), ctx = cv.getContext("2d");
@@ -514,8 +604,8 @@ function draw(){
   let lo = Infinity, hi = -Infinity;
   for (const n of winLeaves){ lo = Math.min(lo, n.c.l); hi = Math.max(hi, n.c.h); }
   for (const z of state.zones){
-    const earliest = z.nodes.slice().sort((a,b) => a.sibIdx - b.sibIdx)[0];
-    const a = anchorNode(earliest);
+    if (!zoneVisibleHere(z)) continue;
+    const a = zoneAnchorNode(z);
     if (a && a.u1 > winU0){ lo = Math.min(lo, z.bottom); hi = Math.max(hi, z.top); }
   }
   const scaled = scaleRange(lo, hi, state.pScale || 1); lo = scaled[0]; hi = scaled[1];
@@ -555,6 +645,20 @@ function draw(){
   ctx.save();
   ctx.beginPath(); ctx.rect(geom.plotX0, 0, geom.plotW, geom.top + geom.plotH); ctx.clip();
 
+  /* price gaps (Show gaps toggle): a translucent amber band on the later
+     candle's slot, between the previous close and this open — above the
+     grid, under everything else. Display only. */
+  if (state.showGaps){
+    for (const gp of findGaps(leaves)){
+      const gx0 = gp.node.x0, gx1 = gp.node.x1;
+      const gyT = Y(Math.max(gp.from, gp.to)), gyB = Y(Math.min(gp.from, gp.to));
+      ctx.fillStyle = "rgba(217,119,6,0.16)";
+      ctx.fillRect(gx0, gyT, gx1 - gx0, gyB - gyT);
+      ctx.strokeStyle = "rgba(180,83,9,0.55)"; ctx.lineWidth = 1;
+      ctx.strokeRect(gx0 + 0.5, gyT + 0.5, (gx1 - gx0) - 1, (gyB - gyT) - 1);
+    }
+  }
+
   /* exploded-family backgrounds + headers */
   const fams = []; state.roots.forEach(n => expandedFamilies(n, fams));
   for (const f of fams){
@@ -577,16 +681,18 @@ function draw(){
     hitHeaders.push({ x0: fx0, x1: fx1, y0: rowY, y1: rowY + ROW_H - 3, node: f });
   }
 
-  /* zones (persist across explode/collapse; anchored to the earliest group
-     candle's current slot, band extends to the right edge of the plot).
+  /* zones (persist across explode/collapse AND across timeframe switches;
+     anchored to the earliest group candle's current slot — or, for a zone
+     carried over from another timeframe, to the root whose period contains
+     its t0 — band extends to the right edge of the plot).
      The BAND paints here, under the candles — but the LABELS are only
      collected here and painted at the very end of draw(), after the
      candles, so no opaque candle body can ever cover the text. */
   const zoneLabels = [];
   ctx.font = "bold 11px system-ui";
   for (const z of state.zones){
-    const earliest = z.nodes.slice().sort((a,b) => a.sibIdx - b.sibIdx)[0];
-    const a = anchorNode(earliest); if (!a) continue;
+    if (!zoneVisibleHere(z)) continue;
+    const a = zoneAnchorNode(z); if (!a) continue;
     const zx0 = a.x0, zx1 = geom.plotX0 + geom.plotW;
     const zyT = Y(z.top), zyB = Y(z.bottom);
     const broken = zoneBroken(z);
@@ -963,6 +1069,8 @@ document.addEventListener("mousedown", ev => { if (!menuEl.hidden && !menuEl.con
 
 /* ---------------- controls ---------------- */
 $("clearZones").addEventListener("click", () => { state.zones = []; setStatus("All zones cleared."); draw(); });
+$("zonesMode").addEventListener("change", () => { state.zonesMode = $("zonesMode").value; draw(); });
+$("showGaps").addEventListener("change", () => { state.showGaps = $("showGaps").checked; draw(); });
 $("reset").addEventListener("click", () => {
   closeMenu();
   state.roots.forEach(n => { n.expanded = false; });
@@ -1043,16 +1151,20 @@ async function copyChartImage(){
 }
 $("copybtn").addEventListener("click", copyChartImage);
 
-function loadView(){
+function loadView(fresh){
   closeMenu();
   state.baseTf = $("tf").value;
-  state.zones = [];
+  /* Zones survive a timeframe switch (fresh = a NEW symbol was loaded —
+     only that clears them). */
+  if (fresh) state.zones = [];
   state.pScale = 1; state.hScale = 1;
   state.hover = null; state.hoverY = null; state.hoverX = null;
   buildRoots();
+  rebindZonesToTree();
   setStatus(state.symbol + " · " + state.daily.length + " daily candles · " +
             fmtDate(state.daily[0].t, "1d") + " – " + fmtDate(state.daily[state.daily.length-1].t, "1d") +
-            " · source: " + state.sourceLabel);
+            " · source: " + state.sourceLabel +
+            (state.zones.length ? " · " + state.zones.length + " zone(s) on the chart" : ""));
   draw(); updateCrumb(); showReadout(null);
 }
 async function doLoad(){
@@ -1078,7 +1190,7 @@ async function doLoad(){
       state.daily = p.candles;
       state.sourceLabel = "Twelve Data";
       state.byTf = { "1d": p.candles, "1wk": aggregate(p.candles, "1wk"), "1mo": aggregate(p.candles, "1mo") };
-      loadView();
+      loadView(true);
     } catch (e) {
       setStatus("Lookup failed: " + e.message, true);
     }
@@ -1097,7 +1209,7 @@ async function doLoad(){
     state.daily = candles;
     state.sourceLabel = "your relay (Polygon)";
     state.byTf = { "1d": candles, "1wk": aggregate(candles, "1wk"), "1mo": aggregate(candles, "1mo") };
-    loadView();
+    loadView(true);
   } catch (e) {
     setStatus("Lookup failed: " + e.message, true);
   }
