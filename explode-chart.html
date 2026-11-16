@@ -29,7 +29,7 @@
   #status.err{ color:var(--dn); }
   #readout{ padding:0 18px 6px; font-size:13px; color:var(--ink); min-height:18px; font-variant-numeric:tabular-nums; }
   #wrap{ margin:0 18px 8px; background:#fff; border:1px solid var(--line); border-radius:10px; position:relative; }
-  canvas{ display:block; width:100%; }
+  canvas{ display:block; width:100%; touch-action:none; }
   #menu{ position:absolute; z-index:5; min-width:218px; background:#fff; border:1px solid var(--line);
          border-radius:10px; box-shadow:0 8px 24px rgba(17,24,39,.18); padding:6px; }
   #menu .mhead{ font-size:12px; font-weight:700; color:var(--mut); padding:4px 8px 6px; }
@@ -88,16 +88,16 @@
   <p><b>Two zones side by side — your choice:</b> clicking an unzoned candle next to a zone always offers both <b>Draw zone</b> (its own separate zone) and <b>Add this candle to the zone</b> — nothing ever merges on its own. Separate zones may overlap on screen; that is fine. If two neighbouring zones are the <b>same type</b> (both demand or both supply), a candle in one of them offers <b>Merge with the neighbouring zone</b>, combining them into one zone whose edges are the extremes across all their candles — as long as the combined count stays within the 7-candle limit (the menu notes it when a merge would pass the limit). Neighbouring zones of <b>opposite</b> types never merge; they simply coexist.</p>
   <p><b>Zones travel across timeframes:</b> zones stay on the chart when you switch between Monthly, Weekly and Daily — only loading a <b>new symbol</b> clears them. A zone's prices are the same in every view, its band starts at the candle (or the higher-timeframe candle) that contains where it was drawn, and its label names the timeframe it came from, so a Weekly zone inside a Monthly chart still reads "Weekly". The <b>Zones</b> selector chooses between <b>All timeframes</b> — every timeframe's zones together, for the multiple-timeframe correlation Mr. Black emphasises — and <b>This timeframe</b>, which shows only the current timeframe's zones and merely hides the rest (switch back and they return). A zone carried over from another timeframe is for looking at in this view; adding candles, merging and removing still happen on its own timeframe. Clear zones removes all of them, whichever the selector says.</p>
   <p><b>Broken zones:</b> zones that price has closed through are shown hatched with dashed borders and marked <b>BROKEN</b> in the label. Only a candle <b>close</b> through the zone breaks it — below a demand zone's bottom edge, or above a supply zone's top edge — and that close must be on the zone's <b>own timeframe or a higher one</b>: a Weekly zone can be broken by a Weekly or Monthly close, never by a Daily one, and lower timeframes cannot break a zone. A wick through the edge doesn't count, and a still-forming higher-timeframe candle hasn't closed yet, so it can't break a zone either. A broken zone keeps its name and colour: a broken demand zone does not become a supply zone.</p>
-  <p><b>Show gaps</b> (the toggle above) shades the empty price space between one candle's close and the next candle's open wherever the two don't meet — the band sits on the later candle, between the two prices — and it is display only: it changes no data, no zones and no drilling.</p>
-  <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. When you click a candle, its marker stays <b>pinned</b> to that candle while the menu is open, so you can still see which candle the menu belongs to while you choose. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically — the stretch pivots on the middle of the candles on screen, so tops and bottoms spread evenly; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles — the chart stays jammed up against the most recent candles on the right, so spreading and squeezing happen from the left side only, squeezing stops once all the candles are shown, and spreading can go all the way down to just a few candles left on the chart. Double-click either axis to reset just that axis; Reset view resets both.</p>
+  <p><b>Show gaps</b> (the toggle above) marks the empty price space between one candle's close and the next candle's open wherever the two don't meet — the mark sits <b>between the two candles</b>, in the space between their bodies, coloured by direction: <b>green for an up gap, red for a down gap</b>, the way Mr. Black draws them — and it is display only: it changes no data, no zones and no drilling.</p>
+  <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. When you click a candle, its marker stays <b>pinned</b> to that candle while the menu is open, so you can still see which candle the menu belongs to while you choose. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically — the stretch pivots on the middle of the candles on screen, so tops and bottoms spread evenly; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles — the chart stays jammed up against the most recent candles on the right, so spreading and squeezing happen from the left side only, squeezing stops once all the candles are shown, and spreading can go all the way down to just a few candles left on the chart. Double-click either axis to reset just that axis; Reset view resets both. Once you have spread or stretched the chart, <b>drag on the chart itself</b> to slide it — left and right through the candles, up and down through the prices — and bring the area you care about back into view; a plain click with no drag still opens a candle's menu, exactly as before.</p>
   <p><b>Copy chart image</b> puts a picture of the chart exactly as it looks right now on your clipboard to paste into an email (or downloads it if the browser refuses) — handy for sending a chart to Trade Phantoms Support.</p>
   <p>Data: choose the lookup source above — your relay (Polygon daily candles, about two years) or Twelve Data with your own free key (kept only in this browser, and shared with the Zone Chart on this site, so a key pasted there is already here). Weekly and Monthly are built from the daily candles in the page, exactly as on the Zone Chart.</p>
 </div>
-<footer id="verfoot">Exploding Candle v1.7</footer>
+<footer id="verfoot">Exploding Candle v1.8</footer>
 
 <script>
 "use strict";
-const VERSION = "1.7";
+const VERSION = "1.8";
 const $ = id => document.getElementById(id);
 const TF_LABEL = {"1mo":"Monthly","1wk":"Weekly","1d":"Daily"};
 const NEXT_TF  = {"1mo":"1wk","1wk":"1d","1d":null};
@@ -123,6 +123,11 @@ const state = {
   sourceLabel: "your relay (Polygon)",
   showGaps: false,        // "Show gaps" toggle: shade close→open price gaps between visible candles
   zonesMode: "all",       // "all": every timeframe's zones drawn together; "current": only the base timeframe's
+  panU: 0,                // horizontal pan offset, in units: how far the visible window has slid LEFT from its
+                          // right-anchored position (0 = most recent candles jammed against the right edge)
+  vWin: null,             // explicit vertical window {lo, hi, pScale} captured by a vertical pan drag; null = auto
+                          // (the range follows the visible window, v1.6 behaviour). Once set it wins until Reset.
+  panning: false,         // true while a pan drag is engaged: crosshair/marker hidden, cursor grabbing
 };
 let frameId = 0;          // incremented each draw; node._f marks "laid out this frame"
 
@@ -541,9 +546,39 @@ function findGaps(leaves){
   const out = [];
   for (let i = 1; i < leaves.length; i++){
     if (gapBetween(leaves[i-1], leaves[i]))
-      out.push({ node: leaves[i], from: leaves[i-1].c.c, to: leaves[i].c.o });
+      out.push({ node: leaves[i], prev: leaves[i-1], from: leaves[i-1].c.c, to: leaves[i].c.o });
   }
   return out;
+}
+/* The painted geometry of one gap marking (v1.8 — Michael's correction,
+   Mr. Black's way of drawing them): the band sits BETWEEN the two candles,
+   from the previous candle's body right edge to the gap candle's body left
+   edge (bodies are drawn 68% of the slot width, centred — bodyEdges uses
+   the candle painter's own formula), and it is coloured by direction:
+   GREEN for an up gap, RED for a down gap. Zoomed far out, the between-
+   bodies space shrinks below visibility, so under ~3px wide a minimum
+   ~3px strip centred on the slot boundary is used instead — the marking
+   never vanishes. Pure given the nodes' pixel spans (x0/x1), so the
+   harness can test the geometry directly. */
+const GAP_UP_FILL = "rgba(46,125,50,0.25)", GAP_DN_FILL = "rgba(198,40,40,0.25)";
+const GAP_UP_LINE = "rgba(46,125,50,0.60)", GAP_DN_LINE = "rgba(198,40,40,0.60)";
+function bodyEdges(n){
+  const bw = Math.max(1, (n.x1 - n.x0) * 0.68), cx = (n.x0 + n.x1) / 2;
+  return [cx - bw / 2, cx + bw / 2];
+}
+function gapBand(prevNode, curNode){
+  const d = gapBetween(prevNode, curNode);
+  if (!d) return null;
+  let x0 = bodyEdges(prevNode)[1], x1 = bodyEdges(curNode)[0];
+  if (x1 - x0 < 3){
+    const b = (prevNode.x1 + curNode.x0) / 2;
+    x0 = b - 1.5; x1 = b + 1.5;
+  }
+  const up = d > 0;
+  return { x0, x1, up,
+           fill: up ? GAP_UP_FILL : GAP_DN_FILL,
+           stroke: up ? GAP_UP_LINE : GAP_DN_LINE,
+           from: prevNode.c.c, to: curNode.c.o };
 }
 
 /* ---------------- layout + draw ---------------- */
@@ -598,17 +633,45 @@ function draw(){
      on screen: tops spread up and bottoms spread down, symmetrically,
      around the plot centre.) At hScale = 1 the window is the whole chart,
      so the full-fit view is unchanged. */
-  const winU0 = totalU - totalU / hScaleEff;      // left edge of the window, in units
-  let winLeaves = leaves.filter(n => n.u1 > winU0 && n.u0 < totalU);
+  const visU = totalU / hScaleEff;               // units visible across the plot at this scale
+  const panU = clampPanU(state.panU, totalU, hScaleEff);
+  /* Left edge of the window, in units. panU = 0 gives the v1.5 rule —
+     right-anchored, most recent candles jammed against the right edge.
+     Panning slides this window left through the data (clamped by
+     clampPanU so it can never pass either end; at full fit it cannot
+     move at all). */
+  const winU0 = totalU - visU - panU;
+  let winLeaves = leaves.filter(n => n.u1 > winU0 && n.u0 < winU0 + visU);
   if (!winLeaves.length) winLeaves = leaves;
+  /* The FULL data range (every leaf + every visible zone) is not ranged
+     over directly — it is the bound that vertical panning clamps against. */
+  let allLo = Infinity, allHi = -Infinity;
+  for (const n of leaves){ allLo = Math.min(allLo, n.c.l); allHi = Math.max(allHi, n.c.h); }
   let lo = Infinity, hi = -Infinity;
   for (const n of winLeaves){ lo = Math.min(lo, n.c.l); hi = Math.max(hi, n.c.h); }
   for (const z of state.zones){
     if (!zoneVisibleHere(z)) continue;
+    allLo = Math.min(allLo, z.bottom); allHi = Math.max(allHi, z.top);
     const a = zoneAnchorNode(z);
     if (a && a.u1 > winU0){ lo = Math.min(lo, z.bottom); hi = Math.max(hi, z.top); }
   }
-  const scaled = scaleRange(lo, hi, state.pScale || 1); lo = scaled[0]; hi = scaled[1];
+  if (state.vWin){
+    /* An explicit vertical window (captured by a vertical pan drag) wins
+       over the auto window range until Reset: pScale stretches around ITS
+       midpoint, and its centre is clamped to the full data range extended
+       by half the window height on either side, so at least part of the
+       data is always in view. Horizontal pans do not touch it. */
+    const fullScaled = scaleRange(allLo, allHi, 1);
+    const half0 = (state.vWin.hi - state.vWin.lo) / 2 * ((state.pScale || 1) / (state.vWin.pScale || 1));
+    const centre = clampPanCentre((state.vWin.lo + state.vWin.hi) / 2, half0, fullScaled[0], fullScaled[1]);
+    lo = centre - half0; hi = centre + half0;
+  } else {
+    /* Auto: the range follows the visible window (v1.6) — this is also
+       what applies while the user only pans horizontally or stretches
+       with the price axis, so the vertical centre follows the candles
+       on screen. */
+    const scaled = scaleRange(lo, hi, state.pScale || 1); lo = scaled[0]; hi = scaled[1];
+  }
   const top = 6 + ROW_H * 2 + 4;               // room for two family-header rows
   const plotX0 = 8, plotW = w - 8 - PAD_R;
   const unitW = (plotW / totalU) * hScaleEff;
@@ -622,9 +685,15 @@ function draw(){
      exactly fill the plot — there is never white space on the right.
      Every consumer (candles, zones, headers, hit-testing, crosshair) reads
      node.x0/x1 from this single X() transform, so they cannot drift apart. */
-  const originX = plotX0 + plotW - totalW;
+  /* The unit origin: at panU = 0 this is exactly plotX0 + plotW - totalW
+     (right-anchored); panning moves the origin right as the window slides
+     left through the data. Every consumer reads node.x0/x1 from this one
+     transform, so candles, zones, gaps, headers, crosshair and hit-
+     testing all pan together. */
+  const originX = plotX0 - winU0 * unitW;
   geom = { plotX0, x0: originX, plotW, top, plotH: h - top - PAD_B, yMin: lo, yMax: hi,
-           unitW, totalU, pScale: state.pScale || 1, hScale: hScaleEff };
+           unitW, totalU, pScale: state.pScale || 1, hScale: hScaleEff,
+           panU, winU0, visU };
   const Y = p => geom.top + (geom.yMax - p) / (geom.yMax - geom.yMin) * geom.plotH;
   const X = u => geom.x0 + u * geom.unitW;
   for (const n of state.roots){ /* set pixel spans now that geom exists */ }
@@ -645,17 +714,20 @@ function draw(){
   ctx.save();
   ctx.beginPath(); ctx.rect(geom.plotX0, 0, geom.plotW, geom.top + geom.plotH); ctx.clip();
 
-  /* price gaps (Show gaps toggle): a translucent amber band on the later
-     candle's slot, between the previous close and this open — above the
-     grid, under everything else. Display only. */
+  /* price gaps (Show gaps toggle): the marking sits BETWEEN the two
+     candles — in the space between their bodies — spanning the gap's
+     price range, green for an up gap and red for a down gap (gapBand
+     computes the geometry). Above the grid, under everything else.
+     Display only. */
   if (state.showGaps){
     for (const gp of findGaps(leaves)){
-      const gx0 = gp.node.x0, gx1 = gp.node.x1;
+      const band = gapBand(gp.prev, gp.node);
+      if (!band) continue;
       const gyT = Y(Math.max(gp.from, gp.to)), gyB = Y(Math.min(gp.from, gp.to));
-      ctx.fillStyle = "rgba(217,119,6,0.16)";
-      ctx.fillRect(gx0, gyT, gx1 - gx0, gyB - gyT);
-      ctx.strokeStyle = "rgba(180,83,9,0.55)"; ctx.lineWidth = 1;
-      ctx.strokeRect(gx0 + 0.5, gyT + 0.5, (gx1 - gx0) - 1, (gyB - gyT) - 1);
+      ctx.fillStyle = band.fill;
+      ctx.fillRect(band.x0, gyT, band.x1 - band.x0, gyB - gyT);
+      ctx.strokeStyle = band.stroke; ctx.lineWidth = 1;
+      ctx.strokeRect(band.x0 + 0.5, gyT + 0.5, (band.x1 - band.x0) - 1, (gyB - gyT) - 1);
     }
   }
 
@@ -731,7 +803,7 @@ function draw(){
      but while a pop-up menu is open it stays PINNED to the menu's candle
      (state.pinned, set in openMenu and cleared only in closeMenu), so the
      user never loses sight of which candle the menu belongs to. */
-  const markerNode = state.pinned || state.hover;
+  const markerNode = state.panning ? null : (state.pinned || state.hover);
   const markerY = state.pinned ? state.pinnedY : state.hoverY;
 
   /* candles */
@@ -806,10 +878,13 @@ function draw(){
     lastLbl = cx;
     ctx.fillText(fmtShort(n.c.t), cx, geom.top + geom.plotH + 12);
   }
-  if (state.hoverX !== null && geom){
+  if (state.panning || panDrag) cv.style.cursor = "grabbing";
+  else if (state.hoverX !== null && geom){
     if (state.hoverX > geom.plotX0 + geom.plotW) cv.style.cursor = "ns-resize";
     else if (state.hoverY !== null && state.hoverY > geom.top + geom.plotH) cv.style.cursor = "ew-resize";
-    else cv.style.cursor = markerNode ? "pointer" : "default";
+    else if (markerNode) cv.style.cursor = "pointer";
+    else if (state.hoverX >= geom.plotX0 && state.hoverY !== null && state.hoverY >= geom.top && state.hoverY <= geom.top + geom.plotH) cv.style.cursor = "grab";
+    else cv.style.cursor = "default";
   } else {
     cv.style.cursor = markerNode ? "pointer" : "default";
   }
@@ -835,7 +910,7 @@ function showReadout(n){
    drag on the date axis (bottom strip) spreads/squeezes horizontally.
    Double-click an axis resets just that axis. Same factors feed geom, so
    candles, zones, headers, hit-testing and the crosshair all agree. */
-let axisDrag = null, suppressClick = false;
+let axisDrag = null, suppressClick = false, panDrag = null;
 /* Horizontal scale limits: 1 is the full fit — every candle shown, exactly
    filling the plot, flush against the right edge. The date axis may spread
    the candles from there, but never squeeze past full fit; squeezing
@@ -859,14 +934,84 @@ function scaleRange(lo, hi, s){
   if (s && s !== 1){ const mid = (hi + lo) / 2, half = (hi - lo) / 2 * s; hi = mid + half; lo = mid - half; }
   return [lo, hi];
 }
+/* ---- panning (v1.8): Michael's "palm in the middle of the graph" ----
+   Horizontal pan offset, in units, clamped so the visible window's start
+   stays within [0, totalUnits - visibleUnits]: the window can slide left
+   through the data until the oldest candle reaches the left edge, and
+   right until the most recent candles are jammed against the right edge
+   again. At full fit (hScale = 1) visibleUnits == totalUnits, so the only
+   allowed offset is 0 — there is nothing to pan. Used by the drag
+   handlers AND by draw(), so no path disagrees. */
+function clampPanU(panU, totalU, hScale){
+  const vis = (totalU || 0) / clampHScale(hScale, totalU);
+  const maxPan = Math.max(0, (totalU || 0) - vis);
+  return Math.min(maxPan, Math.max(0, panU || 0));
+}
+/* Vertical pan clamp: the displayed window's centre must stay within the
+   full data range extended by half the window's height on either side —
+   the user can slide well past the data, but at least part of the data
+   range always remains in view. */
+function clampPanCentre(centre, halfH, fullLo, fullHi){
+  return Math.min(fullHi + halfH, Math.max(fullLo - halfH, centre));
+}
+/* Click-vs-drag discipline: a press that moves ~4px or less is a CLICK
+   (menus, headers, pin — all untouched); past the threshold it is a PAN. */
+function isPanDrag(dx, dy){ return Math.hypot(dx, dy) > 4; }
 function inPriceAxis(x, y){ return geom && x > geom.plotX0 + geom.plotW && x <= geom.plotX0 + geom.plotW + PAD_R && y >= geom.top && y <= geom.top + geom.plotH; }
 function inDateAxis(x, y){ return geom && y > geom.top + geom.plotH && y <= geom.top + geom.plotH + PAD_B && x >= geom.plotX0 && x <= geom.plotX0 + geom.plotW; }
+/* ---- drag-to-pan state machine (shared by mouse and touch) ----
+   panStart arms a candidate on a plot press; panMove engages it once the
+   press has moved past the click threshold (isPanDrag) — from that
+   moment any open menu closes and the release click is suppressed, so a
+   pan can never open a menu or collapse a family by accident. Horizontal
+   movement slides state.panU; vertical movement (past the same
+   threshold) captures the currently displayed price range as the
+   explicit vertical window state.vWin and slides that. A press that
+   never engages is just a click: panEnd reports false and the ordinary
+   click handler runs untouched. */
+function panStart(x, y){
+  if (!geom) return false;
+  if (!(x >= geom.plotX0 && x < geom.plotX0 + geom.plotW && y >= geom.top && y <= geom.top + geom.plotH)) return false;
+  panDrag = { startX: x, startY: y, startPanU: geom.panU || 0, engaged: false, vStart: null };
+  return true;
+}
+function panMove(x, y){
+  if (!panDrag || !geom) return false;
+  const dx = x - panDrag.startX, dy = y - panDrag.startY;
+  if (!panDrag.engaged){
+    if (!isPanDrag(dx, dy)) return true;      // still a candidate click — do nothing yet
+    panDrag.engaged = true;
+    state.panning = true;
+    closeMenu();                              // a pan dismisses any open menu (and its pin)
+  }
+  state.panU = clampPanU(panDrag.startPanU + dx / geom.unitW, geom.totalU, geom.hScale);
+  if (Math.abs(dy) > 4){
+    if (!panDrag.vStart) panDrag.vStart = { lo: geom.yMin, hi: geom.yMax, pScale: state.pScale || 1 };
+    const pricePerPx = (panDrag.vStart.hi - panDrag.vStart.lo) / geom.plotH;
+    const shift = dy * pricePerPx;            // palm semantics: pull down, the chart follows your hand
+    state.vWin = { lo: panDrag.vStart.lo + shift, hi: panDrag.vStart.hi + shift, pScale: panDrag.vStart.pScale };
+  }
+  draw();
+  return true;
+}
+function panEnd(){
+  if (!panDrag) return false;
+  const was = panDrag.engaged;
+  panDrag = null;
+  if (was){
+    state.panning = false;
+    suppressClick = true;                     // the release is not a click (consumed by the click handler)
+    draw();
+  }
+  return was;
+}
 cv.addEventListener("mousedown", ev => {
   if (!geom) return;
   const r = cv.getBoundingClientRect();
   const x = ev.clientX - r.left, y = ev.clientY - r.top;
   if (inPriceAxis(x, y)) axisDrag = { kind: "price", startY: y, startScale: state.pScale || 1, moved: false };
   else if (inDateAxis(x, y)) axisDrag = { kind: "date", startX: x, startScale: state.hScale || 1, moved: false };
+  else panStart(x, y);                        // plot press: a click, or the start of a pan
   if (axisDrag){ closeMenu(); ev.preventDefault(); }
 });
 /* Last known pointer position in canvas coordinates. Tracked on document
@@ -902,6 +1047,7 @@ cv.addEventListener("mousemove", ev => {
     draw();
     return;
   }
+  if (panDrag){ panMove(x, y); return; }
   if (state.pinned){
     /* A pop-up menu is open: the marker stays pinned to the menu's candle
        and must not chase the pointer across other candles. */
@@ -923,13 +1069,14 @@ cv.addEventListener("mousemove", ev => {
 window.addEventListener("mouseup", () => {
   if (axisDrag && axisDrag.moved) suppressClick = true;
   axisDrag = null;
+  panEnd();
 });
 cv.addEventListener("dblclick", ev => {
   if (!geom) return;
   const r = cv.getBoundingClientRect();
   const x = ev.clientX - r.left, y = ev.clientY - r.top;
-  if (inPriceAxis(x, y)){ state.pScale = 1; draw(); }
-  else if (inDateAxis(x, y)){ state.hScale = 1; draw(); }
+  if (inPriceAxis(x, y)){ state.pScale = 1; state.vWin = null; draw(); }
+  else if (inDateAxis(x, y)){ state.hScale = 1; state.panU = 0; draw(); }
 });
 cv.addEventListener("mouseleave", () => {
   /* Moving from the candle into the open pop-up menu "leaves" the canvas —
@@ -940,6 +1087,32 @@ cv.addEventListener("mouseleave", () => {
   showReadout(null);
   draw();
 });
+/* Touch panning: the same state machine as the mouse. A tap stays a
+   tap — touchstart never prevents default, so the synthetic click still
+   fires and opens the menu; once a drag engages, touchmove prevents
+   default (no page scroll, no synthetic click) and panEnd's
+   suppressClick is the backstop, self-clearing in case the browser
+   swallowed the click it was meant for. */
+function canvasPosFromTouch(t){
+  const r = cv.getBoundingClientRect();
+  return { x: t.clientX - r.left, y: t.clientY - r.top };
+}
+cv.addEventListener("touchstart", ev => {
+  if (!geom || ev.touches.length !== 1) return;
+  const p = canvasPosFromTouch(ev.touches[0]);
+  panStart(p.x, p.y);
+}, { passive: true });
+cv.addEventListener("touchmove", ev => {
+  if (!panDrag || ev.touches.length !== 1) return;
+  const p = canvasPosFromTouch(ev.touches[0]);
+  panMove(p.x, p.y);
+  if (panDrag && panDrag.engaged) ev.preventDefault();
+}, { passive: false });
+cv.addEventListener("touchend", () => {
+  if (!panDrag) return;
+  if (panEnd()) setTimeout(() => { suppressClick = false; }, 400);
+});
+
 /* ---------------- contextual pop-up menu ---------------- */
 const menuEl = $("menu");
 let menuNode = null;
@@ -1074,8 +1247,8 @@ $("showGaps").addEventListener("change", () => { state.showGaps = $("showGaps").
 $("reset").addEventListener("click", () => {
   closeMenu();
   state.roots.forEach(n => { n.expanded = false; });
-  state.pScale = 1; state.hScale = 1;
-  state.lastPath = null; setStatus("View reset — all families folded back up, both axis scales reset. Zones kept.");
+  state.pScale = 1; state.hScale = 1; state.panU = 0; state.vWin = null;
+  state.lastPath = null; setStatus("View reset — all families folded back up, both axis scales and the pan reset. Zones kept.");
   draw(); updateCrumb();
 });
 $("tf").addEventListener("change", () => { if (state.daily) loadView(); });
@@ -1157,7 +1330,7 @@ function loadView(fresh){
   /* Zones survive a timeframe switch (fresh = a NEW symbol was loaded —
      only that clears them). */
   if (fresh) state.zones = [];
-  state.pScale = 1; state.hScale = 1;
+  state.pScale = 1; state.hScale = 1; state.panU = 0; state.vWin = null;
   state.hover = null; state.hoverY = null; state.hoverX = null;
   buildRoots();
   rebindZonesToTree();
