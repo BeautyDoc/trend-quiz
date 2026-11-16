@@ -65,6 +65,7 @@
   </span>
   <button id="load" class="primary">Load</button>
   <button id="clearZones">Clear zones</button>
+  <button id="copybtn">Copy chart image</button>
   <button id="reset">Reset view</button>
 </div>
 
@@ -79,6 +80,7 @@
   <p><b>Growing a zone:</b> a base can span several candles. Click a candle right next to an existing zone and the menu offers <b>Add this candle to the zone</b> — the zone's edges then recompute from every candle in the group, using the most extreme wick and the most extreme body in the group. Click a candle inside a multi-candle zone to <b>Remove this candle from the zone</b> (the edges recompute from what is left) or to remove the whole zone. A zone can hold at most <b>7 candles</b> — Mr. Black's limit; the menu says so when a zone is full. The label shows the candle count when a zone has more than one.</p>
   <p><b>Two zones side by side — your choice:</b> clicking an unzoned candle next to a zone always offers both <b>Draw zone</b> (its own separate zone) and <b>Add this candle to the zone</b> — nothing ever merges on its own. Separate zones may overlap on screen; that is fine. If two neighbouring zones are the <b>same type</b> (both demand or both supply), a candle in one of them offers <b>Merge with the neighbouring zone</b>, combining them into one zone whose edges are the extremes across all their candles — as long as the combined count stays within the 7-candle limit (the menu notes it when a merge would pass the limit). Neighbouring zones of <b>opposite</b> types never merge; they simply coexist.</p>
   <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles. Double-click either axis to reset just that axis; Reset view resets both.</p>
+  <p><b>Copy chart image</b> puts a picture of the chart exactly as it looks right now on your clipboard to paste into an email (or downloads it if the browser refuses) — handy for sending a chart to Trade Phantoms Support.</p>
   <p>Data: choose the lookup source above — your relay (Polygon daily candles, about two years) or Twelve Data with your own free key (kept only in this browser, and shared with the Zone Chart on this site, so a key pasted there is already here). Weekly and Monthly are built from the daily candles in the page, exactly as on the Zone Chart.</p>
 </div>
 <footer id="verfoot">Exploding Candle v1.1</footer>
@@ -777,6 +779,52 @@ $("tdkey").addEventListener("change", () => {
   syncProviderUI();
   const vf = $("verfoot"); if (vf) vf.textContent = "Exploding Candle v" + VERSION;
 })();
+
+/* ---------------- copy chart image (Zone Chart pattern) ----------------
+   Snapshots the canvas exactly as it currently looks — candles, zones
+   (multi-candle groups included), family headers, crosshair if showing,
+   and the current axis scaling — adds a header/footer, and copies the PNG
+   to the clipboard; if the browser refuses, it downloads instead. */
+function downloadChartImage(out){
+  out.toBlob(b => {
+    if (!b) { setStatus("Could not make the chart image.", true); return; }
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(b);
+    a.download = "exploding-candle-" + (state.symbol || "chart") + "-" + state.baseTf + ".png";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    setStatus("Your browser would not hand over the clipboard, so the chart image downloaded instead — attach that file to your email.");
+  }, "image/png");
+}
+async function copyChartImage(){
+  if (!state.daily || !state.roots.length) { setStatus("Load a chart first, then copy it.", true); return; }
+  closeMenu();
+  const dpr = window.devicePixelRatio || 1;
+  const head = Math.round(30 * dpr), foot = Math.round(26 * dpr);
+  const out = document.createElement("canvas");
+  out.width = cv.width; out.height = cv.height + head + foot;
+  const c = out.getContext("2d");
+  c.fillStyle = "#ffffff"; c.fillRect(0, 0, out.width, out.height);
+  c.fillStyle = "#111827"; c.font = "600 " + (13 * dpr) + "px system-ui";
+  const headTxt = state.symbol + " · " + TF_LABEL[state.baseTf] + " · " +
+                  fmtDate(state.daily[0].t, "1d") + " – " + fmtDate(state.daily[state.daily.length-1].t, "1d") +
+                  " · source: " + state.sourceLabel + " · Exploding Candle v" + VERSION;
+  c.fillText(headTxt, 8 * dpr, 20 * dpr);
+  c.drawImage(cv, 0, head);
+  c.fillStyle = "#374151"; c.font = (11 * dpr) + "px system-ui";
+  const footTxt = ($("status").textContent.trim() || $("crumb").textContent.trim());
+  c.fillText(footTxt, 8 * dpr, head + cv.height + 17 * dpr);
+  try {
+    if (!(navigator.clipboard && window.ClipboardItem)) throw new Error("no clipboard api");
+    const blob = await new Promise(r => out.toBlob(r, "image/png"));
+    if (!blob) throw new Error("no image");
+    await navigator.clipboard.write([new ClipboardItem({ "image/png": blob })]);
+    setStatus("Chart image copied — paste it into your email with Ctrl+V.");
+  } catch(e) {
+    downloadChartImage(out);
+  }
+}
+$("copybtn").addEventListener("click", copyChartImage);
 
 function loadView(){
   closeMenu();
