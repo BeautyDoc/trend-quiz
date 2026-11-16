@@ -80,15 +80,15 @@
   <p><b>Growing a zone:</b> a base can span several candles. Click a candle right next to an existing zone and the menu offers <b>Add this candle to the zone</b> — the zone's edges then recompute from every candle in the group, using the most extreme wick and the most extreme body in the group. Click a candle inside a multi-candle zone to <b>Remove this candle from the zone</b> (the edges recompute from what is left) or to remove the whole zone. A zone can hold at most <b>7 candles</b> — Mr. Black's limit; the menu says so when a zone is full. The label shows the candle count when a zone has more than one.</p>
   <p><b>Two zones side by side — your choice:</b> clicking an unzoned candle next to a zone always offers both <b>Draw zone</b> (its own separate zone) and <b>Add this candle to the zone</b> — nothing ever merges on its own. Separate zones may overlap on screen; that is fine. If two neighbouring zones are the <b>same type</b> (both demand or both supply), a candle in one of them offers <b>Merge with the neighbouring zone</b>, combining them into one zone whose edges are the extremes across all their candles — as long as the combined count stays within the 7-candle limit (the menu notes it when a merge would pass the limit). Neighbouring zones of <b>opposite</b> types never merge; they simply coexist.</p>
   <p><b>Broken zones:</b> zones that price has closed through are shown hatched with dashed borders and marked <b>BROKEN</b> in the label. Only a candle <b>close</b> through the zone breaks it — below a demand zone's bottom edge, or above a supply zone's top edge — and that close must be on the zone's <b>own timeframe or a higher one</b>: a Weekly zone can be broken by a Weekly or Monthly close, never by a Daily one, and lower timeframes cannot break a zone. A wick through the edge doesn't count, and a still-forming higher-timeframe candle hasn't closed yet, so it can't break a zone either. A broken zone keeps its name and colour: a broken demand zone does not become a supply zone.</p>
-  <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles. Double-click either axis to reset just that axis; Reset view resets both.</p>
+  <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. When you click a candle, its marker stays <b>pinned</b> to that candle while the menu is open, so you can still see which candle the menu belongs to while you choose. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles. Double-click either axis to reset just that axis; Reset view resets both.</p>
   <p><b>Copy chart image</b> puts a picture of the chart exactly as it looks right now on your clipboard to paste into an email (or downloads it if the browser refuses) — handy for sending a chart to Trade Phantoms Support.</p>
   <p>Data: choose the lookup source above — your relay (Polygon daily candles, about two years) or Twelve Data with your own free key (kept only in this browser, and shared with the Zone Chart on this site, so a key pasted there is already here). Weekly and Monthly are built from the daily candles in the page, exactly as on the Zone Chart.</p>
 </div>
-<footer id="verfoot">Exploding Candle v1.3</footer>
+<footer id="verfoot">Exploding Candle v1.4</footer>
 
 <script>
 "use strict";
-const VERSION = "1.3";
+const VERSION = "1.4";
 const $ = id => document.getElementById(id);
 const TF_LABEL = {"1mo":"Monthly","1wk":"Weekly","1d":"Daily"};
 const NEXT_TF  = {"1mo":"1wk","1wk":"1d","1d":null};
@@ -106,6 +106,9 @@ const state = {
   hover: null,            // node under pointer
   hoverY: null,           // pointer y (px) for the crosshair's horizontal line
   hoverX: null,           // pointer x (px), for cursor hints over the axes
+  pinned: null,           // candle the open pop-up menu belongs to: while a menu is open the
+                          // selection marker stays pinned to this candle, wherever the pointer goes
+  pinnedY: null,          // crosshair y (px) frozen at the moment the menu opened
   pScale: 1,              // price-axis stretch factor from axis dragging (1 = auto)
   hScale: 1,              // horizontal (unit-width) scale factor from axis dragging (1 = auto)
   sourceLabel: "your relay (Polygon)",
@@ -599,6 +602,13 @@ function draw(){
     z._zx0 = zx0;
   }
 
+  /* The selection marker: normally it follows the pointer (state.hover),
+     but while a pop-up menu is open it stays PINNED to the menu's candle
+     (state.pinned, set in openMenu and cleared only in closeMenu), so the
+     user never loses sight of which candle the menu belongs to. */
+  const markerNode = state.pinned || state.hover;
+  const markerY = state.pinned ? state.pinnedY : state.hoverY;
+
   /* candles */
   for (const n of leaves){
     const cx = (n.x0 + n.x1) / 2, bw = Math.max(1, (n.x1 - n.x0) * 0.68);
@@ -607,16 +617,17 @@ function draw(){
     ctx.beginPath(); ctx.moveTo(cx, Y(n.c.h)); ctx.lineTo(cx, Y(n.c.l)); ctx.stroke();
     const yO = Y(n.c.o), yC = Y(n.c.c);
     ctx.fillRect(cx - bw/2, Math.min(yO, yC), bw, Math.max(1.4, Math.abs(yC - yO)));
-    if (n === state.hover){ ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 1.6; ctx.strokeRect(n.x0 + 0.5, geom.top, (n.x1 - n.x0) - 1, geom.plotH); ctx.lineWidth = 1; }
+    if (n === markerNode){ ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 1.6; ctx.strokeRect(n.x0 + 0.5, geom.top, (n.x1 - n.x0) - 1, geom.plotH); ctx.lineWidth = 1; }
     hitCandles.push({ node: n, x0: n.x0, x1: n.x1 });
   }
 
-  /* crosshair: vertical line through the hovered candle's centre plus a
-     horizontal line at the pointer's Y (Zone Chart style) */
+  /* crosshair: vertical line through the marked candle's centre plus a
+     horizontal line at the pointer's Y (Zone Chart style); while pinned,
+     the whole crosshair freezes at the menu-open position */
   let crossPrice = null, crossY = null;
-  if (state.hover && state.hoverY !== null && state.hoverY !== undefined){
-    const cx = (state.hover.x0 + state.hover.x1) / 2;
-    crossY = Math.max(geom.top, Math.min(geom.top + geom.plotH, state.hoverY));
+  if (markerNode && markerY !== null && markerY !== undefined){
+    const cx = (markerNode.x0 + markerNode.x1) / 2;
+    crossY = Math.max(geom.top, Math.min(geom.top + geom.plotH, markerY));
     crossPrice = priceAt(crossY);
     ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 1;
     ctx.beginPath(); ctx.moveTo(cx, geom.top); ctx.lineTo(cx, geom.top + geom.plotH); ctx.stroke();
@@ -673,9 +684,9 @@ function draw(){
   if (state.hoverX !== null && geom){
     if (state.hoverX > geom.plotX0 + geom.plotW) cv.style.cursor = "ns-resize";
     else if (state.hoverY !== null && state.hoverY > geom.top + geom.plotH) cv.style.cursor = "ew-resize";
-    else cv.style.cursor = state.hover ? "pointer" : "default";
+    else cv.style.cursor = markerNode ? "pointer" : "default";
   } else {
-    cv.style.cursor = state.hover ? "pointer" : "default";
+    cv.style.cursor = markerNode ? "pointer" : "default";
   }
 }
 function priceAt(y){ return geom.yMax - (y - geom.top) / geom.plotH * (geom.yMax - geom.yMin); }
@@ -710,6 +721,16 @@ cv.addEventListener("mousedown", ev => {
   else if (inDateAxis(x, y)) axisDrag = { kind: "date", startX: x, startScale: state.hScale || 1, moved: false };
   if (axisDrag){ closeMenu(); ev.preventDefault(); }
 });
+/* Last known pointer position in canvas coordinates. Tracked on document
+   (not just the canvas) so it stays current while the pointer is over the
+   pop-up menu, which sits on top of the canvas; closeMenu uses it to hand
+   the marker back to the pointer when a pin is released. */
+let ptrPos = null;
+document.addEventListener("mousemove", ev => {
+  const r = cv.getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  ptrPos = { x, y, inside: x >= 0 && y >= 0 && x <= cv.clientWidth && y <= cv.clientHeight };
+});
 cv.addEventListener("mousemove", ev => {
   if (!geom) return;
   const r = cv.getBoundingClientRect();
@@ -726,6 +747,11 @@ cv.addEventListener("mousemove", ev => {
       state.hScale = Math.min(4, Math.max(0.25, axisDrag.startScale * Math.exp(dx * 0.005)));
     }
     draw();
+    return;
+  }
+  if (state.pinned){
+    /* A pop-up menu is open: the marker stays pinned to the menu's candle
+       and must not chase the pointer across other candles. */
     return;
   }
   const insidePlot = y >= geom.top && y <= geom.top + geom.plotH && x >= geom.plotX0 && x < geom.plotX0 + geom.plotW;
@@ -753,6 +779,10 @@ cv.addEventListener("dblclick", ev => {
   else if (inDateAxis(x, y)){ state.hScale = 1; draw(); }
 });
 cv.addEventListener("mouseleave", () => {
+  /* Moving from the candle into the open pop-up menu "leaves" the canvas —
+     that is exactly the move that used to make the marker vanish. While a
+     menu is open the pin holds the marker, so ignore the leave. */
+  if (state.pinned) return;
   state.hover = null; state.hoverY = null; state.hoverX = null; state._lastHoverY = null;
   showReadout(null);
   draw();
@@ -760,7 +790,25 @@ cv.addEventListener("mouseleave", () => {
 /* ---------------- contextual pop-up menu ---------------- */
 const menuEl = $("menu");
 let menuNode = null;
-function closeMenu(){ menuEl.hidden = true; menuNode = null; }
+/* closeMenu is the SINGLE place that clears the pin, so every close path —
+   choosing an action, Escape, clicking elsewhere, second tap on the same
+   candle, collapse, Reset view, resize, a new load — releases it. */
+function closeMenu(){
+  const wasPinned = state.pinned;
+  menuEl.hidden = true; menuNode = null;
+  state.pinned = null; state.pinnedY = null;
+  if (wasPinned){
+    /* Hand the marker back to the pointer: recompute hover from the last
+       known pointer position if it is over the canvas, else clear it. */
+    let n = null;
+    if (geom && ptrPos && ptrPos.inside && ptrPos.y >= geom.top && ptrPos.y <= geom.top + geom.plotH)
+      n = nodeAt(ptrPos.x);
+    state.hover = n;
+    state.hoverY = (geom && ptrPos && ptrPos.inside) ? ptrPos.y : null;
+    showReadout(n);
+    draw();
+  }
+}
 function zoneOf(node){ return zoneContaining(node); }
 function removeZoneFor(node){
   const z = zoneContaining(node);
@@ -772,6 +820,12 @@ function drillTwo(node){
 }
 function openMenu(node, px, py){
   menuNode = node;
+  /* Pin the selection marker (outline + crosshair) to this candle for as
+     long as the menu is open, wherever the pointer wanders — into the
+     menu, over other candles, anywhere. Released only by closeMenu(). */
+  state.pinned = node;
+  state.pinnedY = py;
+  state.hover = node;
   menuEl.innerHTML = "";
   const head = document.createElement("div");
   head.className = "mhead";
@@ -840,12 +894,14 @@ function openMenu(node, px, py){
   const mw = menuEl.offsetWidth, mh = menuEl.offsetHeight;
   menuEl.style.left = Math.max(4, Math.min(px + 8, wrapW - mw - 4)) + "px";
   menuEl.style.top = Math.max(4, Math.min(py + 8, wrapH - mh - 4)) + "px";
+  draw();   // paint the pinned marker at once (a touch tap has no hover to show it)
 }
 cv.addEventListener("click", ev => {
   if (suppressClick){ suppressClick = false; return; }
   if (!geom) return;
   const r = cv.getBoundingClientRect();
   const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  ptrPos = { x, y, inside: true };   // taps fire no mousemove; keep the pin-release position fresh
   for (const hh of hitHeaders){
     if (x >= hh.x0 && x <= hh.x1 && y >= hh.y0 && y <= hh.y1 && x >= geom.plotX0 && x <= geom.plotX0 + geom.plotW){ closeMenu(); collapse(hh.node); return; }
   }
