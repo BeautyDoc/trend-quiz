@@ -14,7 +14,9 @@
   .bar{ display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:0 18px 8px; }
   .bar label{ font-size:13px; color:var(--mut); }
   input#symbol{ font-size:15px; padding:7px 10px; border:1px solid var(--line); border-radius:8px; width:130px; text-transform:uppercase; }
-  select#tf{ font-size:15px; padding:7px; border:1px solid var(--line); border-radius:8px; }
+  input#tdkey{ font-size:15px; padding:7px 10px; border:1px solid var(--line); border-radius:8px; width:220px; }
+  select#tf, select#provider{ font-size:15px; padding:7px; border:1px solid var(--line); border-radius:8px; }
+  footer#verfoot{ padding:0 18px 18px; font-size:12.5px; color:var(--mut); }
   button{ font-size:14px; padding:7px 14px; border-radius:8px; border:1px solid var(--line); background:#fff; cursor:pointer; }
   button.primary{ background:var(--blue); border-color:var(--blue); color:#fff; font-weight:600; }
   button.primary:hover{ background:var(--blue-d); }
@@ -52,6 +54,15 @@
     <option value="1wk">Weekly</option>
     <option value="1d">Daily</option>
   </select>
+  <label for="provider">Lookup source</label>
+  <select id="provider">
+    <option value="relay" selected>My relay (Polygon)</option>
+    <option value="twelvedata">Twelve Data (needs a free key)</option>
+  </select>
+  <span id="tdkeyrow" hidden>
+    <label for="tdkey">Twelve Data API key</label>
+    <input id="tdkey" type="password" placeholder="paste your key — kept only in this browser" autocomplete="off">
+  </span>
   <button id="load" class="primary">Load</button>
   <button id="clearZones">Clear zones</button>
   <button id="reset">Reset view</button>
@@ -65,11 +76,16 @@
 <div class="help">
   <p><b>Click a candle</b> and a small menu appears with the actions that fit that candle. <b>Drill down one level</b> opens it into the candles of the next timeframe down (Monthly → Weekly → Daily), right where it sits, with its neighbours still around it. <b>Drill down two levels</b> (Monthly candles only) opens it straight through to its Daily candles in one step. Two levels below the starting timeframe is the deepest the drill goes — the way Mr. Black drills. A candle inside an opened family gets its own menu, including <b>Unexplode</b> to fold its family back up (a family's header strip and its ✕ do the same). <b>Daily candles can't be drilled into</b> — that would need intraday data, which the free feed doesn't include; the menu says so.</p>
   <p><b>Draw zone</b> (in the same menu) draws the candle's zone the Essentials way — a demand zone runs from the bottom of the candle's lowest wick to the top of its body, a supply zone from the top of its highest wick to the bottom of its body — and whether it is demand or supply follows the departure: if price leaves upward it is demand, downward it is supply. Zones stay on the chart while you explode and fold candles, so you can see a zone against the smaller candles inside it. Zones can be drawn from candles inside an exploded family too (the label names that candle's timeframe). A candle that already has a zone offers <b>Remove zone</b> instead; Clear zones takes them all off.</p>
-  <p>Data: your relay (Polygon daily candles, about two years); Weekly and Monthly are built from the daily candles in the page, exactly as on the Zone Chart.</p>
+  <p><b>Growing a zone:</b> a base can span several candles. Click a candle right next to an existing zone and the menu offers <b>Add this candle to the zone</b> — the zone's edges then recompute from every candle in the group, using the most extreme wick and the most extreme body in the group. Click a candle inside a multi-candle zone to <b>Remove this candle from the zone</b> (the edges recompute from what is left) or to remove the whole zone. A zone can hold at most <b>7 candles</b> — Mr. Black's limit; the menu says so when a zone is full. The label shows the candle count when a zone has more than one.</p>
+  <p><b>Two zones side by side — your choice:</b> clicking an unzoned candle next to a zone always offers both <b>Draw zone</b> (its own separate zone) and <b>Add this candle to the zone</b> — nothing ever merges on its own. Separate zones may overlap on screen; that is fine. If two neighbouring zones are the <b>same type</b> (both demand or both supply), a candle in one of them offers <b>Merge with the neighbouring zone</b>, combining them into one zone whose edges are the extremes across all their candles — as long as the combined count stays within the 7-candle limit (the menu notes it when a merge would pass the limit). Neighbouring zones of <b>opposite</b> types never merge; they simply coexist.</p>
+  <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles. Double-click either axis to reset just that axis; Reset view resets both.</p>
+  <p>Data: choose the lookup source above — your relay (Polygon daily candles, about two years) or Twelve Data with your own free key (kept only in this browser, and shared with the Zone Chart on this site, so a key pasted there is already here). Weekly and Monthly are built from the daily candles in the page, exactly as on the Zone Chart.</p>
 </div>
+<footer id="verfoot">Exploding Candle v1.1</footer>
 
 <script>
 "use strict";
+const VERSION = "1.1";
 const $ = id => document.getElementById(id);
 const TF_LABEL = {"1mo":"Monthly","1wk":"Weekly","1d":"Daily"};
 const NEXT_TF  = {"1mo":"1wk","1wk":"1d","1d":null};
@@ -82,9 +98,14 @@ const state = {
   daily: null,            // [{t,o,h,l,c,v}] ascending
   byTf: null,             // {"1d":[...], "1wk":[...], "1mo":[...]}
   roots: [],              // top-level nodes
-  zones: [],              // {node, type, top, bottom, tf}
+  zones: [],              // {nodes:[node,...] sorted by sibIdx, node: earliest node (anchor compat), type, top, bottom, tf}
   lastPath: null,         // [tf,...] of deepest/last explosion, for the breadcrumb
   hover: null,            // node under pointer
+  hoverY: null,           // pointer y (px) for the crosshair's horizontal line
+  hoverX: null,           // pointer x (px), for cursor hints over the axes
+  pScale: 1,              // price-axis stretch factor from axis dragging (1 = auto)
+  hScale: 1,              // horizontal (unit-width) scale factor from axis dragging (1 = auto)
+  sourceLabel: "your relay (Polygon)",
 };
 let frameId = 0;          // incremented each draw; node._f marks "laid out this frame"
 
@@ -96,6 +117,19 @@ function parsePolygon(json){
   const out = json.results.map(r => ({t:r.t, o:r.o, h:r.h, l:r.l, c:r.c, v:r.v || 0})).filter(k => isFinite(k.c));
   out.sort((a,b)=>a.t-b.t);
   return out;
+}
+/* Twelve Data: same parser and symbol shaping as the Zone Chart. */
+function tdSymbol(s){ s = s.trim().toUpperCase(); return /^[A-Z]{6}$/.test(s) ? s.slice(0,3) + "/" + s.slice(3) : s; }
+function parseTwelveData(json){
+  if (!json || json.status === "error") throw new Error((json && json.message) || "Twelve Data returned an error.");
+  if (!Array.isArray(json.values)) throw new Error("Unexpected reply from Twelve Data.");
+  const out = json.values.map(v => ({
+    t: Date.parse(v.datetime.indexOf(" ") >= 0 ? v.datetime.replace(" ", "T") + "Z" : v.datetime + "T00:00:00Z"),
+    o: parseFloat(v.open), h: parseFloat(v.high), l: parseFloat(v.low), c: parseFloat(v.close),
+    v: v.volume ? parseFloat(v.volume) : 0
+  })).filter(k => isFinite(k.c));
+  out.sort((a,b)=>a.t-b.t);
+  return {candles: out, name: "", symbol: (json.meta && json.meta.symbol) || ""};
 }
 /* Aggregation identical to the Zone Chart's: Monday-based weeks, calendar months. */
 function aggregate(candles, tf){
@@ -221,15 +255,135 @@ function classifyDeparture(node){
   if (nxt) return nxt.c.c >= k.c ? "demand" : "supply";
   return k.c >= k.o ? "demand" : "supply";
 }
+const MAX_ZONE_CANDLES = 7;
+/* Zone extremes from ALL candles in the group: most extreme wick + most
+   extreme body. Demand: bottom = lowest low, top = highest body top.
+   Supply: top = highest high, bottom = lowest body bottom. */
+function zoneExtremes(nodes, type){
+  if (type === "demand"){
+    return { bottom: Math.min(...nodes.map(n => n.c.l)),
+             top: Math.max(...nodes.map(n => Math.max(n.c.o, n.c.c))) };
+  }
+  return { top: Math.max(...nodes.map(n => n.c.h)),
+           bottom: Math.min(...nodes.map(n => Math.min(n.c.o, n.c.c))) };
+}
+function recomputeZone(zone){
+  zone.nodes.sort((a,b) => a.sibIdx - b.sibIdx);
+  zone.node = zone.nodes[0];
+  const e = zoneExtremes(zone.nodes, zone.type);
+  zone.top = e.top; zone.bottom = e.bottom;
+  return zone;
+}
+function makeZone(node){
+  const type = classifyDeparture(node);
+  return recomputeZone({ nodes: [node], node, type, top: 0, bottom: 0, tf: node.tf });
+}
 function addZone(node){
-  const k = node.c, type = classifyDeparture(node);
-  const zone = type === "demand"
-    ? { node, type, bottom: k.l, top: Math.max(k.o, k.c), tf: node.tf }
-    : { node, type, top: k.h, bottom: Math.min(k.o, k.c), tf: node.tf };
+  const zone = makeZone(node);
   state.zones.push(zone);
-  setStatus((type === "demand" ? "Demand" : "Supply") + " zone drawn from the " + TF_LABEL[node.tf] +
-            " candle of " + fmtDate(k.t, node.tf) + " — " + zone.bottom.toFixed(decimals()) + " to " + zone.top.toFixed(decimals()) + ".");
+  setStatus((zone.type === "demand" ? "Demand" : "Supply") + " zone drawn from the " + TF_LABEL[node.tf] +
+            " candle of " + fmtDate(node.c.t, node.tf) + " — " + zone.bottom.toFixed(decimals()) + " to " + zone.top.toFixed(decimals()) + ".");
   draw();
+}
+function zoneContaining(node){
+  return state.zones.find(z => z.nodes.includes(node)) || null;
+}
+/* Adjacency predicate: node is NOT in the zone, shares the zone's sibling
+   group (same parent + timeframe), and sits immediately left or right of
+   the group's contiguous sibIdx range. */
+function isAdjacentToZone(node, zone){
+  if (!zone || !zone.nodes.length) return false;
+  if (zone.nodes.includes(node)) return false;
+  if (node.tf !== zone.tf) return false;
+  const anchor = zone.nodes[0];
+  if (node.parent !== anchor.parent) return false;
+  if (node.sibArr && anchor.sibArr && node.sibArr !== anchor.sibArr) return false;
+  const idxs = zone.nodes.map(n => n.sibIdx);
+  const lo = Math.min(...idxs), hi = Math.max(...idxs);
+  return node.sibIdx === lo - 1 || node.sibIdx === hi + 1;
+}
+function adjacentZonesFor(node){
+  if (zoneContaining(node)) return [];
+  return state.zones.filter(z => isAdjacentToZone(node, z));
+}
+function addNodeToZone(zone, node){
+  if (zone.nodes.includes(node)) return false;
+  if (zone.nodes.length >= MAX_ZONE_CANDLES) return false;
+  if (!isAdjacentToZone(node, zone)) return false;
+  zone.nodes.push(node);
+  recomputeZone(zone);
+  setStatus("Candle added — " + (zone.type === "demand" ? "Demand" : "Supply") + " zone (" + TF_LABEL[zone.tf] + ") now has " +
+            zone.nodes.length + " of " + MAX_ZONE_CANDLES + " candles — " + zone.bottom.toFixed(decimals()) + " to " + zone.top.toFixed(decimals()) + ".");
+  draw();
+  return true;
+}
+function removeNodeFromZone(zone, node){
+  const i = zone.nodes.indexOf(node);
+  if (i < 0) return false;
+  zone.nodes.splice(i, 1);
+  if (!zone.nodes.length){
+    const zi = state.zones.indexOf(zone);
+    if (zi >= 0) state.zones.splice(zi, 1);
+    setStatus("Zone removed — its last candle was taken out. " + state.zones.length + " zone(s) left.");
+  } else {
+    recomputeZone(zone);
+    setStatus("Candle removed — " + (zone.type === "demand" ? "Demand" : "Supply") + " zone (" + TF_LABEL[zone.tf] + ") now has " +
+              zone.nodes.length + " candle(s) — " + zone.bottom.toFixed(decimals()) + " to " + zone.top.toFixed(decimals()) + ".");
+  }
+  draw();
+  return true;
+}
+function removeZoneObject(zone){
+  const i = state.zones.indexOf(zone);
+  if (i >= 0){ state.zones.splice(i, 1); setStatus("Zone removed. " + state.zones.length + " zone(s) left."); draw(); }
+}
+/* ---- merge vs separate: two zones on adjacent candles stay separate
+   unless the user explicitly merges them (never auto-merge). ---- */
+function zoneRange(zone){
+  const idxs = zone.nodes.map(n => n.sibIdx);
+  return [Math.min(...idxs), Math.max(...idxs)];
+}
+function zonesAreAdjacent(a, b){
+  if (!a || !b || a === b || !a.nodes.length || !b.nodes.length) return false;
+  if (a.tf !== b.tf) return false;
+  if (a.nodes[0].parent !== b.nodes[0].parent) return false;
+  if (a.nodes[0].sibArr && b.nodes[0].sibArr && a.nodes[0].sibArr !== b.nodes[0].sibArr) return false;
+  const [alo, ahi] = zoneRange(a), [blo, bhi] = zoneRange(b);
+  return blo === ahi + 1 || alo === bhi + 1;
+}
+function adjacentZonesToZone(zone){
+  return state.zones.filter(z => z !== zone && zonesAreAdjacent(zone, z));
+}
+/* Merge predicate: different zones, SAME type, adjacent, combined ≤ 7.
+   Opposite-type neighbours return false — they simply coexist/overlap. */
+function canMergeZones(a, b){
+  if (!a || !b || a === b) return false;
+  if (a.type !== b.type) return false;
+  if (!zonesAreAdjacent(a, b)) return false;
+  return (a.nodes.length + b.nodes.length) <= MAX_ZONE_CANDLES;
+}
+function mergeZones(keep, other){
+  if (!canMergeZones(keep, other)) return false;
+  keep.nodes.push(...other.nodes);
+  const oi = state.zones.indexOf(other);
+  if (oi >= 0) state.zones.splice(oi, 1);
+  recomputeZone(keep);
+  setStatus("Zones merged — one " + (keep.type === "demand" ? "Demand" : "Supply") + " zone (" + TF_LABEL[keep.tf] + ") with " +
+            keep.nodes.length + " candles — " + keep.bottom.toFixed(decimals()) + " to " + keep.top.toFixed(decimals()) + ".");
+  draw();
+  return true;
+}
+/* For a candle in a zone: neighbouring DIFFERENT zones, with merge verdicts. */
+function mergeNeighboursFor(node){
+  const mine = zoneContaining(node);
+  if (!mine) return [];
+  return adjacentZonesToZone(mine).map(other => ({
+    zone: other, mine,
+    combined: mine.nodes.length + other.nodes.length,
+    canMerge: canMergeZones(mine, other),
+    sameType: other.type === mine.type,
+    overLimit: other.type === mine.type && (mine.nodes.length + other.nodes.length) > MAX_ZONE_CANDLES
+  }));
 }
 /* The visible node whose slot a (possibly hidden) node currently sits in. */
 function anchorNode(node){
@@ -241,7 +395,7 @@ function anchorNode(node){
 /* ---------------- layout + draw ---------------- */
 const cv = $("chart"), ctx = cv.getContext("2d");
 const PAD_R = 64, PAD_B = 24, ROW_H = 17;
-let geom = null;         // {x0, plotW, top, plotH, yMin, yMax, unitW}
+let geom = null;         // {plotX0, x0 (unit origin, may be < plotX0 when hScale>1), plotW, top, plotH, yMin, yMax, unitW, totalU, pScale, hScale}
 let hitCandles = [];     // visible leaf/collapsed nodes with pixel rects
 let hitHeaders = [];     // {x0,x1,y0,y1,node}
 
@@ -282,9 +436,22 @@ function draw(){
   for (const n of leaves){ lo = Math.min(lo, n.c.l); hi = Math.max(hi, n.c.h); }
   for (const z of state.zones){ lo = Math.min(lo, z.bottom); hi = Math.max(hi, z.top); }
   const pad = (hi - lo) * 0.07 || 1; lo -= pad; hi += pad;
+  if (state.pScale && state.pScale !== 1){
+    const mid = (hi + lo) / 2, half = (hi - lo) / 2 * state.pScale;
+    hi = mid + half; lo = mid - half;
+  }
   const top = 6 + ROW_H * 2 + 4;               // room for two family-header rows
-  geom = { x0: 8, plotW: w - 8 - PAD_R, top, plotH: h - top - PAD_B, yMin: lo, yMax: hi,
-           unitW: (w - 8 - PAD_R) / totalU };
+  const plotX0 = 8, plotW = w - 8 - PAD_R;
+  const unitW = (plotW / totalU) * (state.hScale || 1);
+  const totalW = unitW * totalU;
+  /* Horizontal scaling design: unit width scales by hScale; when the scaled
+     chart is wider than the plot it is anchored at the RIGHT (most-recent)
+     edge and clipped on the left; when narrower it stays left-anchored.
+     Every consumer (candles, zones, headers, hit-testing, crosshair) reads
+     node.x0/x1 from this single X() transform, so they cannot drift apart. */
+  const originX = totalW <= plotW ? plotX0 : plotX0 + plotW - totalW;
+  geom = { plotX0, x0: originX, plotW, top, plotH: h - top - PAD_B, yMin: lo, yMax: hi,
+           unitW, totalU, pScale: state.pScale || 1, hScale: state.hScale || 1 };
   const Y = p => geom.top + (geom.yMax - p) / (geom.yMax - geom.yMin) * geom.plotH;
   const X = u => geom.x0 + u * geom.unitW;
   for (const n of state.roots){ /* set pixel spans now that geom exists */ }
@@ -296,10 +463,14 @@ function draw(){
   const steps = 6;
   for (let i = 0; i <= steps; i++){
     const p = lo + (hi - lo) * i / steps, y = Y(p);
-    ctx.strokeStyle = "#eef1f4"; ctx.beginPath(); ctx.moveTo(geom.x0, y); ctx.lineTo(geom.x0 + geom.plotW, y); ctx.stroke();
+    ctx.strokeStyle = "#eef1f4"; ctx.beginPath(); ctx.moveTo(geom.plotX0, y); ctx.lineTo(geom.plotX0 + geom.plotW, y); ctx.stroke();
     ctx.fillStyle = "#6b7280"; ctx.textAlign = "left";
-    ctx.fillText(p.toFixed(decimals()), geom.x0 + geom.plotW + 6, y);
+    ctx.fillText(p.toFixed(decimals()), geom.plotX0 + geom.plotW + 6, y);
   }
+  /* Everything plotted in unit space is clipped to the plot box, so a
+     horizontally spread chart cannot paint over the price axis. */
+  ctx.save();
+  ctx.beginPath(); ctx.rect(geom.plotX0, 0, geom.plotW, geom.top + geom.plotH); ctx.clip();
 
   /* exploded-family backgrounds + headers */
   const fams = []; state.roots.forEach(n => expandedFamilies(n, fams));
@@ -323,18 +494,21 @@ function draw(){
     hitHeaders.push({ x0: fx0, x1: fx1, y0: rowY, y1: rowY + ROW_H - 3, node: f });
   }
 
-  /* zones (persist across explode/collapse; anchored to their candle's current slot) */
+  /* zones (persist across explode/collapse; anchored to the earliest group
+     candle's current slot, band extends to the right edge of the plot) */
   ctx.font = "bold 11px system-ui";
   for (const z of state.zones){
-    const a = anchorNode(z.node); if (!a) continue;
-    const zx0 = a.x0, zx1 = geom.x0 + geom.plotW;
+    const earliest = z.nodes.slice().sort((a,b) => a.sibIdx - b.sibIdx)[0];
+    const a = anchorNode(earliest); if (!a) continue;
+    const zx0 = a.x0, zx1 = geom.plotX0 + geom.plotW;
     const zyT = Y(z.top), zyB = Y(z.bottom);
     ctx.fillStyle = z.type === "demand" ? "rgba(46,125,50,0.13)" : "rgba(198,40,40,0.12)";
     ctx.fillRect(zx0, zyT, zx1 - zx0, zyB - zyT);
     ctx.strokeStyle = z.type === "demand" ? "rgba(46,125,50,0.55)" : "rgba(198,40,40,0.5)";
     ctx.beginPath(); ctx.moveTo(zx0, zyT); ctx.lineTo(zx1, zyT); ctx.moveTo(zx0, zyB); ctx.lineTo(zx1, zyB); ctx.stroke();
     ctx.fillStyle = z.type === "demand" ? "#2e7d32" : "#c62828"; ctx.textAlign = "left";
-    ctx.fillText((z.type === "demand" ? "Demand zone (" : "Supply zone (") + TF_LABEL[z.tf] + ")", zx0 + 5, zyT + 8);
+    const cnt = z.nodes.length > 1 ? " · " + z.nodes.length + " candles" : "";
+    ctx.fillText((z.type === "demand" ? "Demand zone (" : "Supply zone (") + TF_LABEL[z.tf] + cnt + ")", zx0 + 5, zyT + 8);
     z._zx0 = zx0;
   }
 
@@ -350,19 +524,47 @@ function draw(){
     hitCandles.push({ node: n, x0: n.x0, x1: n.x1 });
   }
 
-  /* date labels along the bottom, thinned to fit */
+  /* crosshair: vertical line through the hovered candle's centre plus a
+     horizontal line at the pointer's Y (Zone Chart style) */
+  let crossPrice = null, crossY = null;
+  if (state.hover && state.hoverY !== null && state.hoverY !== undefined){
+    const cx = (state.hover.x0 + state.hover.x1) / 2;
+    crossY = Math.max(geom.top, Math.min(geom.top + geom.plotH, state.hoverY));
+    crossPrice = priceAt(crossY);
+    ctx.strokeStyle = "#2563eb"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(cx, geom.top); ctx.lineTo(cx, geom.top + geom.plotH); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(geom.plotX0, crossY); ctx.lineTo(geom.plotX0 + geom.plotW, crossY); ctx.stroke();
+  }
+  ctx.restore();
+  /* blue price tag on the right axis, at the crosshair's height */
+  if (crossPrice !== null){
+    ctx.fillStyle = "#2563eb";
+    ctx.fillRect(geom.plotX0 + geom.plotW + 1, crossY - 8, PAD_R - 2, 16);
+    ctx.fillStyle = "#ffffff"; ctx.font = "11px system-ui"; ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    ctx.fillText(crossPrice.toFixed(decimals()), geom.plotX0 + geom.plotW + 6, crossY);
+  }
+
+  /* date labels along the bottom, thinned to fit; skip labels off the plot */
   ctx.fillStyle = "#6b7280"; ctx.font = "10.5px system-ui"; ctx.textAlign = "center";
   let lastLbl = -1e9;
   for (const n of leaves){
     const cx = (n.x0 + n.x1) / 2;
+    if (cx < geom.plotX0 || cx > geom.plotX0 + geom.plotW) continue;
     if (cx - lastLbl < 74) continue;
     lastLbl = cx;
     ctx.fillText(fmtShort(n.c.t), cx, geom.top + geom.plotH + 12);
   }
-  cv.style.cursor = state.hover ? "pointer" : "default";
+  if (state.hoverX !== null && geom){
+    if (state.hoverX > geom.plotX0 + geom.plotW) cv.style.cursor = "ns-resize";
+    else if (state.hoverY !== null && state.hoverY > geom.top + geom.plotH) cv.style.cursor = "ew-resize";
+    else cv.style.cursor = state.hover ? "pointer" : "default";
+  } else {
+    cv.style.cursor = state.hover ? "pointer" : "default";
+  }
 }
 function priceAt(y){ return geom.yMax - (y - geom.top) / geom.plotH * (geom.yMax - geom.yMin); }
 function nodeAt(x){
+  if (geom && (x < geom.plotX0 || x >= geom.plotX0 + geom.plotW)) return null;
   for (const hc of hitCandles){ if (x >= hc.x0 && x < hc.x1) return hc.node; }
   return null;
 }
@@ -376,21 +578,77 @@ function showReadout(n){
           "  — click for actions";
   $("readout").textContent = s;
 }
+/* ---------------- axis dragging ----------------
+   Drag on the price axis (right strip) stretches/squishes vertically;
+   drag on the date axis (bottom strip) spreads/squeezes horizontally.
+   Double-click an axis resets just that axis. Same factors feed geom, so
+   candles, zones, headers, hit-testing and the crosshair all agree. */
+let axisDrag = null, suppressClick = false;
+function inPriceAxis(x, y){ return geom && x > geom.plotX0 + geom.plotW && x <= geom.plotX0 + geom.plotW + PAD_R && y >= geom.top && y <= geom.top + geom.plotH; }
+function inDateAxis(x, y){ return geom && y > geom.top + geom.plotH && y <= geom.top + geom.plotH + PAD_B && x >= geom.plotX0 && x <= geom.plotX0 + geom.plotW; }
+cv.addEventListener("mousedown", ev => {
+  if (!geom) return;
+  const r = cv.getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  if (inPriceAxis(x, y)) axisDrag = { kind: "price", startY: y, startScale: state.pScale || 1, moved: false };
+  else if (inDateAxis(x, y)) axisDrag = { kind: "date", startX: x, startScale: state.hScale || 1, moved: false };
+  if (axisDrag){ closeMenu(); ev.preventDefault(); }
+});
 cv.addEventListener("mousemove", ev => {
   if (!geom) return;
   const r = cv.getBoundingClientRect();
   const x = ev.clientX - r.left, y = ev.clientY - r.top;
-  const n = (y >= geom.top && y <= geom.top + geom.plotH) ? nodeAt(x) : null;
+  state.hoverX = x; state.hoverY = y;
+  if (axisDrag){
+    if (axisDrag.kind === "price"){
+      const dy = y - axisDrag.startY;
+      if (Math.abs(dy) > 3) axisDrag.moved = true;
+      state.pScale = Math.min(4, Math.max(0.25, axisDrag.startScale * Math.exp(dy * 0.005)));
+    } else {
+      const dx = x - axisDrag.startX;
+      if (Math.abs(dx) > 3) axisDrag.moved = true;
+      state.hScale = Math.min(4, Math.max(0.25, axisDrag.startScale * Math.exp(dx * 0.005)));
+    }
+    draw();
+    return;
+  }
+  const insidePlot = y >= geom.top && y <= geom.top + geom.plotH && x >= geom.plotX0 && x < geom.plotX0 + geom.plotW;
+  const n = insidePlot ? nodeAt(x) : null;
+  const prevY = state._lastHoverY;
+  state._lastHoverY = y;
   if (n !== state.hover){ state.hover = n; showReadout(n); draw(); }
+  else if (n && prevY !== y){ draw(); }
+  else if (!n && state.hoverY !== null){ /* keep cursor hints fresh over axes */
+    draw();
+  }
+  /* cursor hints over the axes (draw() also sets this; this is authoritative) */
+  if (inPriceAxis(x, y)) cv.style.cursor = "ns-resize";
+  else if (inDateAxis(x, y)) cv.style.cursor = "ew-resize";
+});
+window.addEventListener("mouseup", () => {
+  if (axisDrag && axisDrag.moved) suppressClick = true;
+  axisDrag = null;
+});
+cv.addEventListener("dblclick", ev => {
+  if (!geom) return;
+  const r = cv.getBoundingClientRect();
+  const x = ev.clientX - r.left, y = ev.clientY - r.top;
+  if (inPriceAxis(x, y)){ state.pScale = 1; draw(); }
+  else if (inDateAxis(x, y)){ state.hScale = 1; draw(); }
+});
+cv.addEventListener("mouseleave", () => {
+  state.hover = null; state.hoverY = null; state.hoverX = null; state._lastHoverY = null;
+  showReadout(null);
+  draw();
 });
 /* ---------------- contextual pop-up menu ---------------- */
 const menuEl = $("menu");
 let menuNode = null;
 function closeMenu(){ menuEl.hidden = true; menuNode = null; }
-function zoneOf(node){ return state.zones.find(z => z.node === node) || null; }
+function zoneOf(node){ return zoneContaining(node); }
 function removeZoneFor(node){
-  const i = state.zones.findIndex(z => z.node === node);
-  if (i >= 0){ state.zones.splice(i, 1); setStatus("Zone removed. " + state.zones.length + " zone(s) left."); draw(); }
+  const z = zoneContaining(node);
+  if (z) removeZoneObject(z);
 }
 function drillTwo(node){
   explode(node);
@@ -425,8 +683,38 @@ function openMenu(node, px, py){
       item("Drill down two levels → Daily", () => drillTwo(node));
   }
   /* zone actions */
-  if (zoneOf(node)) item("Remove zone", () => removeZoneFor(node));
-  else item("Draw zone", () => addZone(node));
+  const myZone = zoneContaining(node);
+  if (myZone){
+    if (myZone.nodes.length > 1){
+      item("Remove this candle from the zone", () => removeNodeFromZone(myZone, node));
+      item("Remove zone", () => removeZoneObject(myZone));
+    } else {
+      item("Remove zone", () => removeZoneObject(myZone));
+    }
+    /* merge-vs-separate: offer a merge only for an adjacent DIFFERENT zone
+       of the SAME type within the 7-candle limit; note it when over. */
+    for (const nb of mergeNeighboursFor(node)){
+      if (!nb.sameType) continue;   // opposite type: no offer, zones coexist
+      const typeLbl = myZone.type === "demand" ? "Demand" : "Supply";
+      if (nb.overLimit){
+        note("Merging with the neighbouring " + typeLbl + " zone would pass Mr. Black's 7-candle limit (" + nb.combined + " candles) — the zones stay separate.");
+      } else if (nb.canMerge){
+        const other = nb.zone, mine = nb.mine, combined = nb.combined;
+        item("Merge with the neighbouring " + typeLbl + " zone — one zone, " + combined + " candles", () => mergeZones(mine, other));
+      }
+    }
+  } else {
+    item("Draw zone", () => addZone(node));
+    for (const adj of adjacentZonesFor(node)){
+      const typeLbl = adj.type === "demand" ? "Demand" : "Supply";
+      if (adj.nodes.length >= MAX_ZONE_CANDLES){
+        note("The adjacent " + typeLbl + " zone is at Mr. Black's 7-candle limit (" + adj.nodes.length + " of 7).");
+      } else {
+        const target = adj;
+        item("Add this candle to the " + typeLbl + " zone (" + (target.nodes.length + 1) + " of 7)", () => addNodeToZone(target, node));
+      }
+    }
+  }
   /* family collapse */
   if (node.parent)
     item("Unexplode — fold back to the " + TF_LABEL[node.parent.tf] + " candle", () => collapse(node.parent));
@@ -438,11 +726,12 @@ function openMenu(node, px, py){
   menuEl.style.top = Math.max(4, Math.min(py + 8, wrapH - mh - 4)) + "px";
 }
 cv.addEventListener("click", ev => {
+  if (suppressClick){ suppressClick = false; return; }
   if (!geom) return;
   const r = cv.getBoundingClientRect();
   const x = ev.clientX - r.left, y = ev.clientY - r.top;
   for (const hh of hitHeaders){
-    if (x >= hh.x0 && x <= hh.x1 && y >= hh.y0 && y <= hh.y1){ closeMenu(); collapse(hh.node); return; }
+    if (x >= hh.x0 && x <= hh.x1 && y >= hh.y0 && y <= hh.y1 && x >= geom.plotX0 && x <= geom.plotX0 + geom.plotW){ closeMenu(); collapse(hh.node); return; }
   }
   if (y < geom.top || y > geom.top + geom.plotH){ closeMenu(); return; }
   const n = nodeAt(x);
@@ -458,28 +747,78 @@ $("clearZones").addEventListener("click", () => { state.zones = []; setStatus("A
 $("reset").addEventListener("click", () => {
   closeMenu();
   state.roots.forEach(n => { n.expanded = false; });
-  state.lastPath = null; setStatus("View reset — all families folded back up. Zones kept.");
+  state.pScale = 1; state.hScale = 1;
+  state.lastPath = null; setStatus("View reset — all families folded back up, both axis scales reset. Zones kept.");
   draw(); updateCrumb();
 });
 $("tf").addEventListener("change", () => { if (state.daily) loadView(); });
 $("symbol").addEventListener("keydown", ev => { if (ev.key === "Enter") doLoad(); });
 $("load").addEventListener("click", doLoad);
 window.addEventListener("resize", () => { closeMenu(); draw(); });
+/* provider choice: remembered separately from the Zone Chart (ec_provider),
+   but the Twelve Data key is SHARED with it (zc_tdkey, same site). */
+function syncProviderUI(){
+  const isTd = $("provider").value === "twelvedata";
+  $("tdkeyrow").hidden = !isTd;
+}
+$("provider").addEventListener("change", () => {
+  try { localStorage.setItem("ec_provider", $("provider").value); } catch(e){}
+  syncProviderUI();
+});
+$("tdkey").addEventListener("change", () => {
+  try { localStorage.setItem("zc_tdkey", $("tdkey").value.trim()); } catch(e){}
+});
+(function initProvider(){
+  let saved = "relay";
+  try { saved = localStorage.getItem("ec_provider") || "relay"; } catch(e){}
+  if (saved !== "relay" && saved !== "twelvedata") saved = "relay";
+  $("provider").value = saved;
+  try { $("tdkey").value = localStorage.getItem("zc_tdkey") || ""; } catch(e){}
+  syncProviderUI();
+  const vf = $("verfoot"); if (vf) vf.textContent = "Exploding Candle v" + VERSION;
+})();
 
 function loadView(){
   closeMenu();
   state.baseTf = $("tf").value;
   state.zones = [];
+  state.pScale = 1; state.hScale = 1;
+  state.hover = null; state.hoverY = null; state.hoverX = null;
   buildRoots();
   setStatus(state.symbol + " · " + state.daily.length + " daily candles · " +
             fmtDate(state.daily[0].t, "1d") + " – " + fmtDate(state.daily[state.daily.length-1].t, "1d") +
-            " · source: your relay (Polygon)");
+            " · source: " + state.sourceLabel);
   draw(); updateCrumb(); showReadout(null);
 }
 async function doLoad(){
   const raw = $("symbol").value.trim();
   if (!raw){ setStatus("Type a symbol first.", true); return; }
   const sym = raw.toUpperCase();
+  const prov = $("provider").value;
+  try { localStorage.setItem("ec_provider", prov); } catch(e){}
+  if (prov === "twelvedata"){
+    const key = $("tdkey").value.trim() || (function(){ try { return localStorage.getItem("zc_tdkey") || ""; } catch(e){ return ""; } })();
+    if (!key){ setStatus("Paste your free Twelve Data API key first (it is kept only in this browser).", true); return; }
+    try { localStorage.setItem("zc_tdkey", key); } catch(e){}
+    $("tdkey").value = key;
+    setStatus("Fetching " + sym + " daily candles from Twelve Data — one pull covers Monthly, Weekly and Daily…");
+    try {
+      const url = "https://api.twelvedata.com/time_series?symbol=" + encodeURIComponent(tdSymbol(raw)) +
+                  "&interval=1day&outputsize=500&apikey=" + encodeURIComponent(key);
+      const r = await fetch(url);
+      const j = await r.json();
+      const p = parseTwelveData(j);
+      if (!p.candles.length) throw new Error("No candles came back for that symbol.");
+      state.symbol = sym;
+      state.daily = p.candles;
+      state.sourceLabel = "Twelve Data";
+      state.byTf = { "1d": p.candles, "1wk": aggregate(p.candles, "1wk"), "1mo": aggregate(p.candles, "1mo") };
+      loadView();
+    } catch (e) {
+      setStatus("Lookup failed: " + e.message, true);
+    }
+    return;
+  }
   setStatus("Fetching " + sym + " daily candles from your relay — one pull covers Monthly, Weekly and Daily…");
   try {
     const base = (localStorage.getItem("zc_relay") || RELAY_DEFAULT).replace(/\/?$/, "");
@@ -491,6 +830,7 @@ async function doLoad(){
     if (!candles.length) throw new Error("No candles came back for that symbol.");
     state.symbol = sym;
     state.daily = candles;
+    state.sourceLabel = "your relay (Polygon)";
     state.byTf = { "1d": candles, "1wk": aggregate(candles, "1wk"), "1mo": aggregate(candles, "1mo") };
     loadView();
   } catch (e) {
