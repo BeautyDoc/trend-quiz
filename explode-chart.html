@@ -80,15 +80,15 @@
   <p><b>Growing a zone:</b> a base can span several candles. Click a candle right next to an existing zone and the menu offers <b>Add this candle to the zone</b> — the zone's edges then recompute from every candle in the group, using the most extreme wick and the most extreme body in the group. Click a candle inside a multi-candle zone to <b>Remove this candle from the zone</b> (the edges recompute from what is left) or to remove the whole zone. A zone can hold at most <b>7 candles</b> — Mr. Black's limit; the menu says so when a zone is full. The label shows the candle count when a zone has more than one.</p>
   <p><b>Two zones side by side — your choice:</b> clicking an unzoned candle next to a zone always offers both <b>Draw zone</b> (its own separate zone) and <b>Add this candle to the zone</b> — nothing ever merges on its own. Separate zones may overlap on screen; that is fine. If two neighbouring zones are the <b>same type</b> (both demand or both supply), a candle in one of them offers <b>Merge with the neighbouring zone</b>, combining them into one zone whose edges are the extremes across all their candles — as long as the combined count stays within the 7-candle limit (the menu notes it when a merge would pass the limit). Neighbouring zones of <b>opposite</b> types never merge; they simply coexist.</p>
   <p><b>Broken zones:</b> zones that price has closed through are shown hatched with dashed borders and marked <b>BROKEN</b> in the label. Only a candle <b>close</b> through the zone breaks it — below a demand zone's bottom edge, or above a supply zone's top edge — and that close must be on the zone's <b>own timeframe or a higher one</b>: a Weekly zone can be broken by a Weekly or Monthly close, never by a Daily one, and lower timeframes cannot break a zone. A wick through the edge doesn't count, and a still-forming higher-timeframe candle hasn't closed yet, so it can't break a zone either. A broken zone keeps its name and colour: a broken demand zone does not become a supply zone.</p>
-  <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. When you click a candle, its marker stays <b>pinned</b> to that candle while the menu is open, so you can still see which candle the menu belongs to while you choose. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles. Double-click either axis to reset just that axis; Reset view resets both.</p>
+  <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. When you click a candle, its marker stays <b>pinned</b> to that candle while the menu is open, so you can still see which candle the menu belongs to while you choose. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles — the chart stays jammed up against the most recent candles on the right, so spreading and squeezing happen from the left side only, and squeezing stops once all the candles are shown. Double-click either axis to reset just that axis; Reset view resets both.</p>
   <p><b>Copy chart image</b> puts a picture of the chart exactly as it looks right now on your clipboard to paste into an email (or downloads it if the browser refuses) — handy for sending a chart to Trade Phantoms Support.</p>
   <p>Data: choose the lookup source above — your relay (Polygon daily candles, about two years) or Twelve Data with your own free key (kept only in this browser, and shared with the Zone Chart on this site, so a key pasted there is already here). Weekly and Monthly are built from the daily candles in the page, exactly as on the Zone Chart.</p>
 </div>
-<footer id="verfoot">Exploding Candle v1.4</footer>
+<footer id="verfoot">Exploding Candle v1.5</footer>
 
 <script>
 "use strict";
-const VERSION = "1.4";
+const VERSION = "1.5";
 const $ = id => document.getElementById(id);
 const TF_LABEL = {"1mo":"Monthly","1wk":"Weekly","1d":"Daily"};
 const NEXT_TF  = {"1mo":"1wk","1wk":"1d","1d":null};
@@ -110,7 +110,7 @@ const state = {
                           // selection marker stays pinned to this candle, wherever the pointer goes
   pinnedY: null,          // crosshair y (px) frozen at the moment the menu opened
   pScale: 1,              // price-axis stretch factor from axis dragging (1 = auto)
-  hScale: 1,              // horizontal (unit-width) scale factor from axis dragging (1 = auto)
+  hScale: 1,              // horizontal (unit-width) scale factor from axis dragging (1 = full fit; never below 1)
   sourceLabel: "your relay (Polygon)",
 };
 let frameId = 0;          // incremented each draw; node._f marks "laid out this frame"
@@ -506,16 +506,21 @@ function draw(){
   }
   const top = 6 + ROW_H * 2 + 4;               // room for two family-header rows
   const plotX0 = 8, plotW = w - 8 - PAD_R;
-  const unitW = (plotW / totalU) * (state.hScale || 1);
+  const hScaleEff = clampHScale(state.hScale || 1);
+  const unitW = (plotW / totalU) * hScaleEff;
   const totalW = unitW * totalU;
-  /* Horizontal scaling design: unit width scales by hScale; when the scaled
-     chart is wider than the plot it is anchored at the RIGHT (most-recent)
-     edge and clipped on the left; when narrower it stays left-anchored.
+  /* Horizontal scaling design (Michael's rule): the chart is ALWAYS jammed
+     against the RIGHT edge — the most recent candle's right edge sits
+     exactly on the plot's right edge at every scale. Spreading and
+     squeezing happen entirely from the LEFT: spreading pushes older
+     candles off the left edge (clipped), squeezing lets more candles in
+     from the left, and the squeeze stops at hScale = 1, where all candles
+     exactly fill the plot — there is never white space on the right.
      Every consumer (candles, zones, headers, hit-testing, crosshair) reads
      node.x0/x1 from this single X() transform, so they cannot drift apart. */
-  const originX = totalW <= plotW ? plotX0 : plotX0 + plotW - totalW;
+  const originX = plotX0 + plotW - totalW;
   geom = { plotX0, x0: originX, plotW, top, plotH: h - top - PAD_B, yMin: lo, yMax: hi,
-           unitW, totalU, pScale: state.pScale || 1, hScale: state.hScale || 1 };
+           unitW, totalU, pScale: state.pScale || 1, hScale: hScaleEff };
   const Y = p => geom.top + (geom.yMax - p) / (geom.yMax - geom.yMin) * geom.plotH;
   const X = u => geom.x0 + u * geom.unitW;
   for (const n of state.roots){ /* set pixel spans now that geom exists */ }
@@ -711,6 +716,13 @@ function showReadout(n){
    Double-click an axis resets just that axis. Same factors feed geom, so
    candles, zones, headers, hit-testing and the crosshair all agree. */
 let axisDrag = null, suppressClick = false;
+/* Horizontal scale limits: 1 is the full fit — every candle shown, exactly
+   filling the plot, flush against the right edge. The date axis may spread
+   the candles up to 4x from there, but never squeeze past full fit;
+   squeezing below 1 is what used to leave a white gap to the right of the
+   most recent candles. Used by the drag handler AND by draw() itself, so
+   no path can put the chart into a sub-fit state. */
+function clampHScale(v){ return Math.min(4, Math.max(1, v)); }
 function inPriceAxis(x, y){ return geom && x > geom.plotX0 + geom.plotW && x <= geom.plotX0 + geom.plotW + PAD_R && y >= geom.top && y <= geom.top + geom.plotH; }
 function inDateAxis(x, y){ return geom && y > geom.top + geom.plotH && y <= geom.top + geom.plotH + PAD_B && x >= geom.plotX0 && x <= geom.plotX0 + geom.plotW; }
 cv.addEventListener("mousedown", ev => {
@@ -744,7 +756,7 @@ cv.addEventListener("mousemove", ev => {
     } else {
       const dx = x - axisDrag.startX;
       if (Math.abs(dx) > 3) axisDrag.moved = true;
-      state.hScale = Math.min(4, Math.max(0.25, axisDrag.startScale * Math.exp(dx * 0.005)));
+      state.hScale = clampHScale(axisDrag.startScale * Math.exp(dx * 0.005));
     }
     draw();
     return;
