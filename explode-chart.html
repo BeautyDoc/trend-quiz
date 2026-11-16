@@ -80,15 +80,15 @@
   <p><b>Growing a zone:</b> a base can span several candles. Click a candle right next to an existing zone and the menu offers <b>Add this candle to the zone</b> — the zone's edges then recompute from every candle in the group, using the most extreme wick and the most extreme body in the group. Click a candle inside a multi-candle zone to <b>Remove this candle from the zone</b> (the edges recompute from what is left) or to remove the whole zone. A zone can hold at most <b>7 candles</b> — Mr. Black's limit; the menu says so when a zone is full. The label shows the candle count when a zone has more than one.</p>
   <p><b>Two zones side by side — your choice:</b> clicking an unzoned candle next to a zone always offers both <b>Draw zone</b> (its own separate zone) and <b>Add this candle to the zone</b> — nothing ever merges on its own. Separate zones may overlap on screen; that is fine. If two neighbouring zones are the <b>same type</b> (both demand or both supply), a candle in one of them offers <b>Merge with the neighbouring zone</b>, combining them into one zone whose edges are the extremes across all their candles — as long as the combined count stays within the 7-candle limit (the menu notes it when a merge would pass the limit). Neighbouring zones of <b>opposite</b> types never merge; they simply coexist.</p>
   <p><b>Broken zones:</b> zones that price has closed through are shown hatched with dashed borders and marked <b>BROKEN</b> in the label. Only a candle <b>close</b> through the zone breaks it — below a demand zone's bottom edge, or above a supply zone's top edge — and that close must be on the zone's <b>own timeframe or a higher one</b>: a Weekly zone can be broken by a Weekly or Monthly close, never by a Daily one, and lower timeframes cannot break a zone. A wick through the edge doesn't count, and a still-forming higher-timeframe candle hasn't closed yet, so it can't break a zone either. A broken zone keeps its name and colour: a broken demand zone does not become a supply zone.</p>
-  <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. When you click a candle, its marker stays <b>pinned</b> to that candle while the menu is open, so you can still see which candle the menu belongs to while you choose. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles — the chart stays jammed up against the most recent candles on the right, so spreading and squeezing happen from the left side only, and squeezing stops once all the candles are shown. Double-click either axis to reset just that axis; Reset view resets both.</p>
+  <p><b>Crosshair &amp; scaling:</b> move your pointer over the chart — the vertical line sits on the hovered candle, the horizontal line follows your pointer, and the blue tag on the right price axis reads the exact price at that line. When you click a candle, its marker stays <b>pinned</b> to that candle while the menu is open, so you can still see which candle the menu belongs to while you choose. Drag the <b>price axis</b> (the numbers on the right) up or down to stretch or squish the chart vertically — the stretch pivots on the middle of the candles on screen, so tops and bottoms spread evenly; drag the <b>date axis</b> (the numbers along the bottom) left or right to spread or squeeze the candles — the chart stays jammed up against the most recent candles on the right, so spreading and squeezing happen from the left side only, squeezing stops once all the candles are shown, and spreading can go all the way down to just a few candles left on the chart. Double-click either axis to reset just that axis; Reset view resets both.</p>
   <p><b>Copy chart image</b> puts a picture of the chart exactly as it looks right now on your clipboard to paste into an email (or downloads it if the browser refuses) — handy for sending a chart to Trade Phantoms Support.</p>
   <p>Data: choose the lookup source above — your relay (Polygon daily candles, about two years) or Twelve Data with your own free key (kept only in this browser, and shared with the Zone Chart on this site, so a key pasted there is already here). Weekly and Monthly are built from the daily candles in the page, exactly as on the Zone Chart.</p>
 </div>
-<footer id="verfoot">Exploding Candle v1.5</footer>
+<footer id="verfoot">Exploding Candle v1.6</footer>
 
 <script>
 "use strict";
-const VERSION = "1.5";
+const VERSION = "1.6";
 const $ = id => document.getElementById(id);
 const TF_LABEL = {"1mo":"Monthly","1wk":"Weekly","1d":"Daily"};
 const NEXT_TF  = {"1mo":"1wk","1wk":"1d","1d":null};
@@ -496,17 +496,31 @@ function draw(){
   const totalU = state.roots.reduce((s,n)=>s+units(n),0);
   state.roots.forEach((n,i)=>{ if (i===0) layout(n,0); else layout(n, state.roots[i-1].u1); });
   const leaves = []; state.roots.forEach(n => visibleLeaves(n, leaves));
+  const hScaleEff = clampHScale(state.hScale || 1, totalU);
+  /* The vertical range comes from the candles in the current horizontal
+     WINDOW — the right-anchored slice the user is actually looking at —
+     not from the whole loaded history. (v1.5 and earlier ranged over every
+     candle ever loaded: stretching then pivoted on the midpoint of the
+     full history, so when the on-screen candles all sat in the top part
+     of that range they rushed up and off the top edge while the
+     compensating downward move happened on old candles off-screen. With
+     the window as the range, scaleRange pivots on the midpoint of what is
+     on screen: tops spread up and bottoms spread down, symmetrically,
+     around the plot centre.) At hScale = 1 the window is the whole chart,
+     so the full-fit view is unchanged. */
+  const winU0 = totalU - totalU / hScaleEff;      // left edge of the window, in units
+  let winLeaves = leaves.filter(n => n.u1 > winU0 && n.u0 < totalU);
+  if (!winLeaves.length) winLeaves = leaves;
   let lo = Infinity, hi = -Infinity;
-  for (const n of leaves){ lo = Math.min(lo, n.c.l); hi = Math.max(hi, n.c.h); }
-  for (const z of state.zones){ lo = Math.min(lo, z.bottom); hi = Math.max(hi, z.top); }
-  const pad = (hi - lo) * 0.07 || 1; lo -= pad; hi += pad;
-  if (state.pScale && state.pScale !== 1){
-    const mid = (hi + lo) / 2, half = (hi - lo) / 2 * state.pScale;
-    hi = mid + half; lo = mid - half;
+  for (const n of winLeaves){ lo = Math.min(lo, n.c.l); hi = Math.max(hi, n.c.h); }
+  for (const z of state.zones){
+    const earliest = z.nodes.slice().sort((a,b) => a.sibIdx - b.sibIdx)[0];
+    const a = anchorNode(earliest);
+    if (a && a.u1 > winU0){ lo = Math.min(lo, z.bottom); hi = Math.max(hi, z.top); }
   }
+  const scaled = scaleRange(lo, hi, state.pScale || 1); lo = scaled[0]; hi = scaled[1];
   const top = 6 + ROW_H * 2 + 4;               // room for two family-header rows
   const plotX0 = 8, plotW = w - 8 - PAD_R;
-  const hScaleEff = clampHScale(state.hScale || 1);
   const unitW = (plotW / totalU) * hScaleEff;
   const totalW = unitW * totalU;
   /* Horizontal scaling design (Michael's rule): the chart is ALWAYS jammed
@@ -718,11 +732,27 @@ function showReadout(n){
 let axisDrag = null, suppressClick = false;
 /* Horizontal scale limits: 1 is the full fit — every candle shown, exactly
    filling the plot, flush against the right edge. The date axis may spread
-   the candles up to 4x from there, but never squeeze past full fit;
-   squeezing below 1 is what used to leave a white gap to the right of the
-   most recent candles. Used by the drag handler AND by draw() itself, so
-   no path can put the chart into a sub-fit state. */
-function clampHScale(v){ return Math.min(4, Math.max(1, v)); }
+   the candles from there, but never squeeze past full fit; squeezing
+   below 1 is what used to leave a white gap to the right of the most
+   recent candles. The ceiling is DYNAMIC (v1.6): maxHScale lets the user
+   always spread down to roughly 3 visible candles — totalUnits / 3 — with
+   the old 4x kept as a floor for small charts (v1.5's flat 4x ceiling
+   stopped a ~500-candle Daily chart at ~125 candles still on screen, far
+   too soon for Michael). Used by the drag handler AND by draw() itself,
+   so no path can put the chart into a sub-fit or over-spread state. */
+function maxHScale(totalU){ return Math.max(4, (totalU || 0) / 3); }
+function clampHScale(v, totalU){ return Math.min(maxHScale(totalU), Math.max(1, v)); }
+/* Pad a price range, then stretch it by pScale around its MIDPOINT: the
+   midpoint price maps to the centre pixel of the plot at every scale and
+   the two extremes move symmetrically — tops up, bottoms down. draw()
+   feeds it the range of the candles in the current horizontal window
+   (see the window comment in draw), so the pivot is the middle of what
+   is on screen, never the middle of the whole loaded history. */
+function scaleRange(lo, hi, s){
+  const pad = (hi - lo) * 0.07 || 1; lo -= pad; hi += pad;
+  if (s && s !== 1){ const mid = (hi + lo) / 2, half = (hi - lo) / 2 * s; hi = mid + half; lo = mid - half; }
+  return [lo, hi];
+}
 function inPriceAxis(x, y){ return geom && x > geom.plotX0 + geom.plotW && x <= geom.plotX0 + geom.plotW + PAD_R && y >= geom.top && y <= geom.top + geom.plotH; }
 function inDateAxis(x, y){ return geom && y > geom.top + geom.plotH && y <= geom.top + geom.plotH + PAD_B && x >= geom.plotX0 && x <= geom.plotX0 + geom.plotW; }
 cv.addEventListener("mousedown", ev => {
@@ -756,7 +786,12 @@ cv.addEventListener("mousemove", ev => {
     } else {
       const dx = x - axisDrag.startX;
       if (Math.abs(dx) > 3) axisDrag.moved = true;
-      state.hScale = clampHScale(axisDrag.startScale * Math.exp(dx * 0.005));
+      /* 0.008/px (v1.6, was 0.005): with the dynamic ceiling a Daily
+         chart can now need ~170x, and ln(170)/0.008 ≈ 640px of drag
+         reaches it in one long pull, while a 10px nudge near full fit
+         still only moves the scale by ~8% — deep zoom is reachable
+         without small adjustments turning twitchy. */
+      state.hScale = clampHScale(axisDrag.startScale * Math.exp(dx * 0.008), geom.totalU);
     }
     draw();
     return;
